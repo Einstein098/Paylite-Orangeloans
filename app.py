@@ -216,7 +216,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <div class="absolute -right-10 -bottom-10 w-44 h-44 rounded-full bg-[#FFCC00]/10 blur-xl pointer-events-none"></div>
         <div class="relative z-10 space-y-3">
           <span class="inline-block bg-[#FFCC00] text-[#004F71] px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Fast Mobile Access</span>
-          <h3 class="text-2xl sm:text-3xl font-black leading-tight">Loans Up To UGX 100,000,000 INSTANTLY!</h3>
+          <h3 class="text-2xl sm:text-3xl font-black leading-tight">Loans Up To UGX 1,000,000 INSTANTLY!</h3>
           <p class="text-blue-100 text-sm max-w-md">No paperwork, no standing in lines. Apply directly from your phone in under 2 minutes.</p>
         </div>
       </div>
@@ -286,7 +286,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       
       <div>
         <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Loan Amount (UGX)</label>
-        <input id="input-amount" type="number" placeholder="e.g. 2500" min="500" max="10000" step="500" oninput="syncAmount(this.value, true)" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
+        <input id="input-amount" type="number" placeholder="e.g. 2500" min="50000" max="1000000" step="50000" oninput="syncAmount(this.value, true)" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
       </div>
 
     </div>
@@ -312,11 +312,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="bg-white  p-6 border border-slate-200/80 shadow-sm space-y-6">
         <div class="text-center">
           <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Requested Amount</div>
-          <div id="display-amount" class="text-4xl font-black text-[#004F71] mt-1">UGX 50,000,000</div>
-          <input type="range" id="amount-slider" min="500" max="10000" step="500" value="2500" oninput="syncAmount(this.value)" class="w-full mt-4 accent-[#FFCC00]">
+          <div id="display-amount" class="text-4xl font-black text-[#004F71] mt-1">UGX 500,000</div>
+          <input type="range" id="amount-slider" min="50000" max="1000000" step="50000" value="500000" oninput="syncAmount(this.value)" class="w-full mt-4 accent-[#FFCC00]">
           <div class="flex justify-between text-xs text-slate-400 mt-1 font-semibold">
             <span>UGX 50,000</span>
-            <span>UGX 100,000,000</span>
+            <span>UGX 1,000,000</span>
           </div>
         </div>
 
