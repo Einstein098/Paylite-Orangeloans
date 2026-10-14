@@ -15,8 +15,8 @@ def serve_assets(filename):
     return send_from_directory('assets', filename)
 
 
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+# Telegram Configuration (support both TELEGRAM_BOT_TOKEN and TELEGRAM_TOKEN)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def send_telegram_notification(message):
