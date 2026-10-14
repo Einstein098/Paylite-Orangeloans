@@ -259,12 +259,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
       
       <div>
         <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Mobile Number</label>
-        <input id="input-mobile" type="tel" placeholder="+27 71 000 0000" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
+        <input id="input-mobile" type="tel" placeholder="0770000000" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
       </div>
       
       <div>
         <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">ID Number</label>
-        <input id="input-nationalid" type="text" placeholder="00-000000-X-00" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
+        <input id="input-nationalid" type="text" placeholder="National ID Number" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
       </div>
       
       <div>
@@ -660,6 +660,50 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const sel = document.getElementById('input-purpose');
       if (sel) sel.value = p;
       goTo('apply');
+    }
+
+    function calculateCosts() {
+      const val = appState.amount;
+      const days = appState.period;
+      
+      let rate = 0.05;
+      if (days <= 7) rate = 0.03;
+      else if (days <= 14) rate = 0.05;
+      else if (days <= 30) rate = 0.10;
+      else if (days <= 60) rate = 0.15;
+      else rate = 0.20;
+
+      const interest = Math.round(val * rate);
+      const fee = Math.round(val * 0.03);
+      const total = val + interest + fee;
+
+      const interestEl = document.getElementById('breakdown-interest');
+      const feeEl = document.getElementById('breakdown-fee');
+      const totalEl = document.getElementById('breakdown-total');
+
+      if (interestEl) interestEl.innerText = 'UGX ' + interest.toLocaleString();
+      if (feeEl) feeEl.innerText = 'UGX ' + fee.toLocaleString();
+      if (totalEl) totalEl.innerText = 'UGX ' + total.toLocaleString();
+
+      const dateEl = document.getElementById('breakdown-date');
+      if (dateEl) {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        dateEl.innerText = d.toLocaleDateString('en-GB');
+      }
+    }
+
+    function setPeriod(days) {
+      appState.period = days;
+      document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.classList.remove('bg-[#004F71]', 'text-white', 'border-[#004F71]', 'shadow-sm');
+        btn.classList.add('text-slate-700', 'border-slate-200');
+        if (btn.innerText.includes(days + ' Days')) {
+          btn.classList.add('bg-[#004F71]', 'text-[#FFCC00]', 'border-[#004F71]', 'shadow-sm');
+          btn.classList.remove('text-slate-700', 'border-slate-200');
+        }
+      });
+      calculateCosts();
     }
 
     function syncAmount(val, isFromInput = false) {
