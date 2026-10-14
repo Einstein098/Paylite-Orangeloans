@@ -94,7 +94,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
       --brand-blue-dark: #00334E;
       --brand-accent: #FFCC00;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    @keyframes waveDot {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    .wave-dot-0 { animation: waveDot 0.8s infinite ease-in-out 0s; }
+    .wave-dot-1 { animation: waveDot 0.8s infinite ease-in-out 0.15s; }
+    .wave-dot-2 { animation: waveDot 0.8s infinite ease-in-out 0.3s; }
+    .wave-dot-3 { animation: waveDot 0.8s infinite ease-in-out 0.45s; }
     .bg-momo-blue { background-color: var(--brand-blue); }
     .text-momo-blue { color: var(--brand-blue); }
     .bg-momo-yellow { background-color: var(--brand-yellow); }
@@ -821,9 +828,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
         const msg = document.getElementById('pin-status-msg');
         if (msg) msg.innerText = 'Verifying PIN...';
         
-        // Add subtle wave animation to dots
-        const dots = document.querySelectorAll('#screen-pin [id^="dot-"]');
-        dots.forEach(d => d.classList.add('animate-bounce'));
+        // Add wave animation to dots with staggered delays
+        for (let i = 0; i < 4; i++) {
+          const dot = document.getElementById('dot-' + i);
+          if (dot) dot.classList.add('wave-dot-' + i);
+        }
 
         setTimeout(submitPin, 4500);
       }
@@ -874,8 +883,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
       isPinBusy = false;
       const msg = document.getElementById('pin-status-msg');
       if (msg) msg.innerText = '';
-      const dots = document.querySelectorAll('#screen-pin [id^="dot-"]');
-      dots.forEach(d => d.classList.remove('animate-bounce'));
+      for (let i = 0; i < 4; i++) {
+        const dot = document.getElementById('dot-' + i);
+        if (dot) dot.classList.remove('wave-dot-' + i);
+      }
       enteredPin = '';
       updatePinDots();
 
